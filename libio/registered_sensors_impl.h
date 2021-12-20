@@ -68,9 +68,9 @@ void Sensor_Default::init_ros(ros::NodeHandle& nh)
 {
   std::stringstream sstr;
   if (sensor_id > 1)
-    sstr << sensor_type.name << "_" << sensor_id;
+    sstr << sensor.name << "_" << sensor_id;
   else
-    sstr << sensor_type.name;
+    sstr << sensor.name;
   pub = nh.advertise<std_msgs::String>(sstr.str(), 10);
   std::cout << "advertized a ros node for sensor " << sstr.str() << std::endl;
 }
@@ -143,8 +143,8 @@ Sensor_IMU_MPU9250_Acc::Sensor_IMU_MPU9250_Acc(const uint16_t sen_len, const Sen
 #ifdef HAVE_ROS
 void Sensor_IMU_MPU9250_Acc::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, 10);
-  std::cout << "advertized a ros node for sensor " << sensor_type.name << std::endl;
+  pub = nh.advertise<sensor_msgs::Imu>(sensor.name, 10);
+  std::cout << "advertized a ros node for sensor " << sensor.name << std::endl;
 }
 #endif
 
@@ -221,9 +221,9 @@ Sensor_IMU::Sensor_IMU(const uint16_t sen_len, const SensorType sensor_type) : S
 #ifdef HAVE_ROS
 void Sensor_IMU::init_ros(ros::NodeHandle& nh)
 {
-  msg.header.frame_id = sensor_type.name;
-  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, 10);
-  std::cout << "advertized a ros node for an IMU sensor " << sensor_type.name << std::endl;
+  msg.header.frame_id = sensor.name;
+  pub = nh.advertise<sensor_msgs::Imu>(sensor.name, 10);
+  std::cout << "advertized a ros node for an IMU sensor " << sensor.name << std::endl;
 }
 #endif
 
@@ -593,8 +593,8 @@ Sensor_Baro::Sensor_Baro(const uint16_t sen_len, const SensorType sensor_type) :
 #ifdef HAVE_ROS
 void Sensor_Baro::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::FluidPressure>(sensor_type.name, 10);
-  std::cout << "advertized a ros node for a Baro sensor " << sensor_type.name << std::endl;
+  pub = nh.advertise<sensor_msgs::FluidPressure>(sensor.name, 10);
+  std::cout << "advertized a ros node for a Baro sensor " << sensor.name << std::endl;
 }
 #endif
 
@@ -682,8 +682,8 @@ Sensor_Joy::Sensor_Joy(const uint16_t sen_len, const SensorType sensor_type) : S
 #ifdef HAVE_ROS
 void Sensor_Joy::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::Joy>(sensor_type.name, 10);
-  std::cout << "advertized a ros node for a Joy sensor " << sensor_type.name << std::endl;
+  pub = nh.advertise<sensor_msgs::Joy>(sensor.name, 10);
+  std::cout << "advertized a ros node for a Joy sensor " << sensor.name << std::endl;
 }
 #endif
 
@@ -813,6 +813,7 @@ protected:
   std::vector<float> tactile_array;
 #ifdef HAVE_ROS
   ros::Publisher pub;
+  sensor_msgs::ChannelFloat32 tactile_sensor;
   tactile_msgs::TactileState msg;
 #endif
 
@@ -829,9 +830,9 @@ Sensor_Tactile::Sensor_Tactile(const uint16_t sen_len, const SensorType sensor_t
 void Sensor_Tactile::init_ros(ros::NodeHandle& nh)
 {
   msg.sensors.resize(1);
-  pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, 10);
-  msg.sensors[0].name = "tactile";
-  std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << std::endl;
+  pub = nh.advertise<tactile_msgs::TactileState>(sensor.name, 10);
+  tactile_sensor.name = "tactile";
+  std::cout << "advertized a ros node for a Tactile sensor " << sensor.name << std::endl;
 }
 #endif
 
@@ -843,7 +844,8 @@ void Sensor_Tactile::publish()
     previous_timestamp = timestamp;
 #ifdef HAVE_ROS
     msg.header.stamp = ros::Time::now();
-    msg.sensors[0].values = tactile_array;
+    tactile_sensor.values = tactile_array;
+    msg.sensors[0] = tactile_sensor;
     pub.publish(msg);
 #else
     // printf something else there
@@ -883,8 +885,7 @@ Sensor_MID_tactile_fingertip_teensy::Sensor_MID_tactile_fingertip_teensy(const u
   num_taxels = sen_len / 2;
   tactile_array.resize(num_taxels);
 #ifdef HAVE_ROS
-  msg.sensors.resize(1);
-  msg.sensors[0].name = "rh_ffdistal";  // matches urdf marker description
+  tactile_sensor.name = "rh_ffdistal";  // matches urdf marker description
 #endif
 }
 
@@ -932,6 +933,11 @@ private:
   const unsigned int NUM_BOARDS = 10;
   const unsigned int ADC_PER_BOARD = 6;
   bool initialized;
+
+#ifdef HAVE_ROS
+  std::vector<sensor_msgs::ChannelFloat32> tactile_sensors;
+  tactile_msgs::TactileState tactile_msg;
+#endif
 };
 
 Sensor_iobject_myrmex::Sensor_iobject_myrmex(const uint16_t sen_len, const SensorType sensor_type)
@@ -946,12 +952,11 @@ Sensor_iobject_myrmex::Sensor_iobject_myrmex(const uint16_t sen_len, const Senso
 void Sensor_iobject_myrmex::init_ros(ros::NodeHandle& nh)
 {
   Sensor_Tactile::init_ros(nh);
-  msg.sensors.resize(NUM_BOARDS);  // 10 boards
-
+  tactile_sensors.resize(NUM_BOARDS);  // 10 boards
   for (size_t board_id = 0; board_id < NUM_BOARDS; board_id++)
   {
-    msg.sensors[board_id].name = "board" + std::to_string(board_id);
-    msg.sensors[board_id].values.resize(NUM_CHANNELS * ADC_PER_BOARD);
+    tactile_sensors[board_id].name = "board" + std::to_string(board_id);
+    tactile_sensors[board_id].values.resize(NUM_CHANNELS * ADC_PER_BOARD);
   }
 }
 #endif
@@ -972,13 +977,13 @@ void Sensor_iobject_myrmex::publish()
         unsigned int adc_start_idx = adc_id * NUM_CHANNELS;
         for (size_t channel_id = 0; channel_id < NUM_CHANNELS; channel_id++)
         {
-          msg.sensors[board_id].values[adc_id * NUM_CHANNELS + channel_id] =
-            tactile_array[board_start_idx + adc_start_idx + channel_id];
+          tactile_sensors[board_id].values[adc_id * NUM_CHANNELS + channel_id] =
+              tactile_array[board_start_idx + adc_start_idx + channel_id];
         }
       }
     }
     msg.header.stamp = ros::Time::now();
-    //msg.sensors = tactile_sensors;
+    msg.sensors = tactile_sensors;
     pub.publish(msg);
 #else
     // printf something else there
@@ -1057,138 +1062,6 @@ bool Sensor_iobject_myrmex::parse()
   return false;
 }
 
-/* myrmex v2 */
-
-// 16x16 array, row-major for the vector, and values is offset in the source buffer
-// mapping sorts ADC and channel ordering at once
-const uint8_t myrmex_data_lut[256] =
-{
-208, 224,  32,   0, 209, 225,  33,   1, 210, 226,  34,   2, 211, 227,  35,   3,
-192,  48,  16,  64, 193,  49,  17,  65, 194,  50,  18,  66, 195,  51,  19,  67,
-176, 144, 112,  80, 177, 145, 113,  81, 178, 146, 114,  82, 179, 147, 115,  83,
-160, 240, 128,  96, 161, 241, 129,  97, 162, 242, 130,  98, 163, 243, 131,  99,
-212, 228,  36,   4, 213, 229,  37,   5, 214, 230,  38,   6, 215, 231,  39,   7,
-196,  52,  20,  68, 197,  53,  21,  69, 198,  54,  22,  70, 199,  55,  23,  71,
-180, 148, 116,  84, 181, 149, 117,  85, 182, 150, 118,  86, 183, 151, 119,  87,
-164, 244, 132, 100, 165, 245, 133, 101, 166, 246, 134, 102, 167, 247, 135, 103,
-216, 232,  40,   8, 217, 233,  41,   9, 218, 234,  42,  10, 219, 235,  43,  11,
-200,  56,  24,  72, 201,  57,  25,  73, 202,  58,  26,  74, 203,  59,  27,  75,
-184, 152, 120,  88, 185, 153, 121,  89, 186, 154, 122,  90, 187, 155, 123,  91,
-168, 248, 136, 104, 169, 249, 137, 105, 170, 250, 138, 106, 171, 251, 139, 107,
-220, 236,  44,  12, 221, 237,  45,  13, 222, 238,  46,  14, 223, 239,  47,  15,
-204,  60,  28,  76, 205,  61,  29,  77, 206,  62,  30,  78, 207,  63,  31,  79,
-188, 156, 124,  92, 189, 157, 125,  93, 190, 158, 126,  94, 191, 159, 127,  95,
-172, 252, 140, 108, 173, 253, 141, 109, 174, 254, 142, 110, 175, 255, 143, 111};
-
-// DECL
-class Sensor_myrmex_v2 : public Sensor_Tactile
-{
-public:
-  Sensor_myrmex_v2(const uint16_t sen_len, const SensorType sensor_type);
-  static SensorBase* Create(const uint16_t sen_len, const SensorType sensor_type)
-  {
-    return new Sensor_myrmex_v2(sen_len, sensor_type);
-  }
-  void publish();  // overloaded to permit re-organize the low-level data before
-                   // publishing
-protected:
-  unsigned int board_id;
-
-private:
-  bool parse();
-#ifdef HAVE_ROS
-  void init_ros(ros::NodeHandle& nh);
-#endif
-
-private:
-  // always consider myrmex logical sensor as a single board with 16x16 cell
-  // it can be represented as an array. For multiple arrays
-  // multiple logical sensors should be used
-  // (they could have any combined shape not necessarily arrays)
-  const unsigned int NUM_CHANNELS = 16;
-  const unsigned int ADC_PER_BOARD = 16;
-
-  static unsigned int board_count;
-
-};
-
-
-unsigned int Sensor_myrmex_v2::board_count{ 0 };
-
-// IMPL 
-Sensor_myrmex_v2::Sensor_myrmex_v2(const uint16_t sen_len, const SensorType sensor_type)
-  : Sensor_Tactile(sen_len, sensor_type)
-{
-  // sen_len should be 256 x 2 bytes
-  tactile_array.resize(NUM_CHANNELS * ADC_PER_BOARD);
-  board_id = board_count++;
-}
-
-#ifdef HAVE_ROS
-void Sensor_myrmex_v2::init_ros(ros::NodeHandle& nh)
-{
-  msg.sensors.resize(1);
-  pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, 10);
-  std::cout << "advertized a ros node for a Myrmex tactile sensor " << sensor_type.name << std::endl;
-  msg.sensors[board_id].name = "myrmex_sensor" + std::to_string(board_id);
-  msg.sensors[board_id].values.resize(NUM_CHANNELS * ADC_PER_BOARD);
-}
-#endif
-
-void Sensor_myrmex_v2::publish()
-{
-  if (new_data)
-  {
-    new_data = false;
-#ifdef HAVE_ROS
-    for (size_t i = 0; i < tactile_array.size(); i++)
-    {
-      msg.sensors[board_id].values[i] = tactile_array[i];
-    }
-    msg.header.stamp = ros::Time::now();
-    pub.publish(msg);
-#else
-    // printf something else there
-    std::cout << "  timestamp: " << timestamp << "\n\tdata: ";
-    for (size_t i = 0; i < tactile_array.size(); i++)
-    {
-      if (i > 0 && i%16 == 0)
-        std::cout << std::endl;
-      std::cout << tactile_array[i] << " | ";
-    }
-    std::cout << std::endl;
-#endif
-  }
-}
-
-bool Sensor_myrmex_v2::parse()
-{
-  // TODO:Guillaume handle the timestamp for each channel
-  if (len >= 1)
-  {
-    uint8_t* buf = (uint8_t*)get_data();
-    if (buf)
-    {
-      // buffers are sequences of signed 16bits integers in little-endian
-      // there are 256 samples of 2 bytes = 512 bytes = sen_len,
-      // 4 MSB are the channel number of the ADC, 12 LSB are tactile sensor data.
-      // ADC are in the CS sequence of myrmex board
-      for (uint16_t idx = 0; idx < len/2; ++idx)
-      {
-        // find the offset in the buf using a lut
-        uint8_t offset = myrmex_data_lut[idx];
-        //uint8_t channel = LITTLEENDIAN4MSB_TO_UNSIGNED_INT8(buf + offset);
-        uint16_t tmp = LITTLEENDIAN12_TO_UNSIGNED_INT16(buf + offset*2);
-        tactile_array[idx] = (float)tmp;
-      }
-      new_data = true;
-      return true;
-    }
-  }
-  return false;
-}
-
-
 /* palm baro array */
 
 class Sensor_BMP388modified_pressure_array : public Sensor_Tactile
@@ -1209,6 +1082,11 @@ private:
 private:
   const unsigned int NUM_BYTE_PER_CHANNELS = 2;
   bool initialized;
+
+#ifdef HAVE_ROS
+  std::vector<sensor_msgs::ChannelFloat32> tactile_sensors;
+  tactile_msgs::TactileState tactile_msg;
+#endif
 };
 
 Sensor_BMP388modified_pressure_array::Sensor_BMP388modified_pressure_array(const uint16_t sen_len,
@@ -1224,9 +1102,9 @@ Sensor_BMP388modified_pressure_array::Sensor_BMP388modified_pressure_array(const
 void Sensor_BMP388modified_pressure_array::init_ros(ros::NodeHandle& nh)
 {
   Sensor_Tactile::init_ros(nh);
-  msg.sensors.resize(1);
-  msg.sensors[0].name = "palm_baro_array";
-  msg.sensors[0].values.resize(tactile_array.size());
+  tactile_sensors.resize(1);
+  tactile_sensors[0].name = "palm_baro_array";
+  tactile_sensors[0].values.resize(tactile_array.size());
 }
 #endif
 
@@ -1237,8 +1115,9 @@ void Sensor_BMP388modified_pressure_array::publish()
   {
     new_data = false;
 #ifdef HAVE_ROS
-    msg.sensors[0].values = tactile_array;
+    tactile_sensors[0].values = tactile_array;
     msg.header.stamp = ros::Time::now();
+    msg.sensors = tactile_sensors;
     pub.publish(msg);
 #else
     // printf something else there
@@ -1306,6 +1185,9 @@ Sensor_tactile_glove_teensy::Sensor_tactile_glove_teensy(const uint16_t sen_len,
   // sen_len = x * (1 id + 2 data) => x is the tactile_array size
   num_taxels = sen_len / 3;
   tactile_array.resize(num_taxels);
+#ifdef HAVE_ROS
+  tactile_sensor.name = "tactile glove";  // matches urdf marker description
+#endif
 }
 
 #ifdef HAVE_ROS
@@ -1313,8 +1195,8 @@ void Sensor_tactile_glove_teensy::init_ros(ros::NodeHandle& nh)
 {
   msg.sensors.resize(1);
   pub = nh.advertise<tactile_msgs::TactileState>("TactileGlove", 10);
-  msg.sensors[0].name = "tactile";
-  std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << " on topic TactileGlove" << std::endl;
+  tactile_sensor.name = "tactile";
+  std::cout << "advertized a ros node for a Tactile sensor " << sensor.name << " on topic TactileGlove" << std::endl;
 }
 #endif
 

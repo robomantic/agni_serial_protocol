@@ -10,12 +10,10 @@
 #ifdef HAVE_ROS
 #include <ros/ros.h>
 #include <agni_serial_protocol/SetPeriod.h>
-#include <agni_serial_protocol/GetSerialNumber.h>
-#include <agni_serial_protocol/GetDeviceMap.h>
 #endif
 
 // constants
-#define SP_MAX_BUF_SIZE 1024
+#define SP_MAX_BUF_SIZE 256
 
 // small shift operations to combine/split bytes
 #define Highbyte(x) (x >> 8)
@@ -56,16 +54,12 @@ public:
   {
     return len;
   }
-  const SensorType &get_type()
-  {
-    return sensor_type;
-  }
   virtual void publish() = 0;
   virtual bool parse() = 0;
 
 protected:
   void extract_timestamp(uint8_t* buf);
-  SensorType sensor_type;
+  SensorType sensor;
   uint16_t len;
   void* dataptr;
   uint32_t timestamp;
@@ -125,7 +119,6 @@ public:
   void init_ros(ros::NodeHandle& nh);
 #endif
   std::string get_serial();
-  void set_serial(std::string serial_number);
 
   std::vector<std::pair<SensorBase*, bool>>& get_sensors()
   {
@@ -181,17 +174,13 @@ public:
 
   DeviceType get_device();
   bool verbose;
-  std::string service_prefix;
-  bool throw_at_timeout;
 
 protected:
   void config();
-  void req_serialnum();
   void read_config(uint8_t* buf);
-  void read_serialnum(uint8_t* buf);
   void read_error(uint8_t* buf);
   void read_data(uint8_t* buf, const uint8_t did);
-  void read(bool local_throw_at_timeout);
+  void read();
 
   // void unpack_data(uint8_t *buf);
   bool valid_data(const uint8_t* buf, const uint32_t buf_len);
@@ -221,19 +210,11 @@ protected:
   std::string d_filename;
   std::string s_filename;
   Device dev;
-  uint8_t read_buf[SP_MAX_BUF_SIZE];
 
 #ifdef HAVE_ROS
   ros::ServiceServer service_set_period;
-  ros::ServiceServer service_get_serialnumber;
-  ros::ServiceServer service_get_devicemap;
   bool service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
-                             agni_serial_protocol::SetPeriod::Response& res);
-  bool service_get_devicemap_cb(agni_serial_protocol::GetDeviceMap::Request& req,
-                                agni_serial_protocol::GetDeviceMap::Response& res);
-  bool service_get_serialnum_cb(agni_serial_protocol::GetSerialNumber::Request& req,
-                                   agni_serial_protocol::GetSerialNumber::Response& res);
-
+                                               agni_serial_protocol::SetPeriod::Response& res);
 #endif
 };
 }

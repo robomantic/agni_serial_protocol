@@ -20,15 +20,12 @@ find_package(Boost 1.38 REQUIRED COMPONENTS system program_options)
 if(catkin_FOUND)
   add_message_files(DIRECTORY msg FILES
     PeriodMap.msg
-    DeviceMap.msg
   )
 
   # Generate services in the 'srv' folder
   add_service_files(
     FILES
     SetPeriod.srv
-    GetDeviceMap.srv
-    GetSerialNumber.srv
   )
   
   generate_messages(

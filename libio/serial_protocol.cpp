@@ -14,12 +14,12 @@ namespace serial_protocol
 uint8_t SensorBase::base_sensor_count{ 0 };
 
 SensorBase::SensorBase(const uint16_t sen_len, const SensorType sensor_type)
-  : sensor_type(sensor_type), len(0), dataptr(0), timestamp(0), previous_timestamp(0)
+  : sensor(sensor_type), len(0), dataptr(0), timestamp(0), previous_timestamp(0)
 {
   // check data len consistency to registered len
-  if (this->sensor_type.data_length > 0)
+  if (sensor_type.data_length > 0)
   {
-    if (sen_len != this->sensor_type.data_length)
+    if (sen_len != sensor_type.data_length)
       throw std::runtime_error(std::string("sensor: non-matching data length"));
   }
   len = sen_len;
@@ -91,7 +91,6 @@ SensorFactory::SensorFactory()
   Register("AS5013_y_position", &Sensor_AS5013y::Create);
   Register("AS5013", &Sensor_AS5013::Create);
   Register("iobject_myrmex", &Sensor_iobject_myrmex::Create);
-  Register("tactile_module_16x16_v2", &Sensor_myrmex_v2::Create);
   Register("tactile_glove_teensy", &Sensor_tactile_glove_teensy::Create);
   Register("tactile_glove_teensy_bend", &Sensor_tactile_glove_teensy_bend::Create);
   Register("BMP388modified_pressure_array", &Sensor_BMP388modified_pressure_array::Create);
@@ -146,11 +145,6 @@ void Device::init_ros(ros::NodeHandle& nh)
 std::string Device::get_serial()
 {
   return serialnum;
-}
-
-void Device::set_serial(std::string serial_number)
-{
-  serialnum = serial_number;
 }
 
 std::pair<SensorBase*, bool>* Device::get_sensor_by_idx(const uint8_t idx)
@@ -239,7 +233,7 @@ void Device::publish_all()
 
 SerialProtocolBase::SerialProtocolBase(SerialCom* serial_com, const std::string device_filename,
                                        const std::string sensor_filename)
-  : verbose(false), service_prefix(""), throw_at_timeout(true), streaming(false), s(serial_com), d_filename(device_filename), s_filename(sensor_filename)
+  : verbose(false), streaming(false), s(serial_com), d_filename(device_filename), s_filename(sensor_filename)
 {
 }
 
@@ -253,7 +247,6 @@ bool SerialProtocolBase::init()
   {
     stop_streaming();
     config();
-    req_serialnum();
     return true;
   }
   catch (const std::exception& e)
@@ -268,10 +261,7 @@ void SerialProtocolBase::init_ros(ros::NodeHandle& nh)
 {
   dev.init_ros(nh);
   // initialize set_period services
-  service_prefix = ros::this_node::getName() + "/";
-  service_set_period = nh.advertiseService(service_prefix + "set_period", &SerialProtocolBase::service_set_period_cb, this) ;
-  service_get_serialnumber = nh.advertiseService(service_prefix + "get_serialnumber", &SerialProtocolBase::service_get_serialnum_cb, this) ;
-  service_get_devicemap = nh.advertiseService(service_prefix + "get_devicemap", &SerialProtocolBase::service_get_devicemap_cb, this) ;
+  service_set_period = nh.advertiseService("set_period", &SerialProtocolBase::service_set_period_cb, this) ;
 }
 
 bool SerialProtocolBase::service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
@@ -356,27 +346,6 @@ bool SerialProtocolBase::service_set_period_cb(agni_serial_protocol::SetPeriod::
   return true;
 }
 
-bool SerialProtocolBase::service_get_serialnum_cb(agni_serial_protocol::GetSerialNumber::Request& req,
-                                                  agni_serial_protocol::GetSerialNumber::Response& res)
-{         
-  res.serial_number = dev.get_serial();
-  return true;
-}
-
-
-bool SerialProtocolBase::service_get_devicemap_cb(agni_serial_protocol::GetDeviceMap::Request& req,
-                                                  agni_serial_protocol::GetDeviceMap::Response& res)
-{         
-  const std::vector<std::pair<SensorBase*, bool>> sensors = dev.get_sensors();
-  for (unsigned int i=0; i < sensors.size(); ++i)
-  {
-    res.device_map.sensor_ids.push_back(i+1);
-    res.device_map.sensor_names.push_back(sensors[i].first->get_type().name);
-    res.device_map.driver_ids.push_back(sensors[i].first->get_type().id);
-  }
-  return true;
-}
-
 #endif
 
 void SerialProtocolBase::config()
@@ -394,7 +363,7 @@ void SerialProtocolBase::config()
     std::cerr << e.what() << std::endl;
     throw std::runtime_error(std::string("sp: failed to config"));
   }
-  read(true);
+  read();
 }
 
 bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t config_num)
@@ -422,23 +391,6 @@ bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t con
       return false;
   }
   return true;
-}
-
-void SerialProtocolBase::req_serialnum()
-{
-  uint8_t send_buf[SP_HEADER_LEN + SP_DID_LEN + SP_CMD_LEN + + SP_CHKSUM_LEN];
-  // request serial
-  uint32_t send_buf_len = gen_serialnum_req(send_buf);
-  try
-  {
-    s->writeFrame(send_buf, (size_t)send_buf_len);
-  }
-  catch (const std::exception& e)
-  {
-    std::cerr << e.what() << std::endl;
-    throw std::runtime_error(std::string("sp: failed to req serial"));
-  }
-  read(false); // function might not be implemented in the device, so ignore if no response
 }
 
 bool SerialProtocolBase::set_device(const uint8_t dev_id)
@@ -788,7 +740,7 @@ void SerialProtocolBase::update()
 {
   try
   {
-    read(throw_at_timeout);
+    read();
   }
   catch (const std::exception& e)
   {
@@ -893,51 +845,6 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   }
 }
 
-void SerialProtocolBase::read_serialnum(uint8_t* buf)
-{
-  // read one additional byte to know the length
-  size_t buf_len = 0;
-  buf_len = s->readFrame(buf + SP_SER_SZ_OFFSET, SP_SER_SZ_LEN);
-  if (buf_len < SP_SER_SZ_LEN)
-  {
-    std::cerr << "sp: incorrect serialnum header size: " << buf_len << " < "
-              << SP_SER_SZ_LEN << "\n";
-    throw std::runtime_error(std::string("sp: device did not answer enough data for serialnum"));
-  }
-  // read serial data
-  uint8_t sernum_awaitedlen = (uint8_t)buf[SP_SER_SZ_OFFSET];
- 
-  // read next part of the config message
-  size_t sernum_len = 0;
-  try
-  {
-    sernum_len = s->readFrame(buf + SP_SER_NUM_OFFSET, sernum_awaitedlen + SP_CHKSUM_LEN);
-  }
-  catch (const std::exception& e)
-  {
-    std::cerr << e.what() << std::endl;
-    throw std::runtime_error(std::string("sp: device failed to answer"));
-  }
-  // check data
-  if (sernum_len != (size_t)(sernum_awaitedlen + SP_CHKSUM_LEN))
-  {
-    std::cerr << "sp: read " << sernum_len << " bytes of sernum_len instead of "
-              << sernum_awaitedlen + SP_CHKSUM_LEN << std::endl;
-    throw std::runtime_error(std::string("sp: incomplete serialnum datagram"));
-  }
-  // validate the full frame
-  if (valid_data(buf, SP_SER_NUM_OFFSET + sernum_len))
-  {
-    // store the serial number
-    dev.set_serial(std::string((char*)buf + SP_SER_NUM_OFFSET, sernum_awaitedlen));
-  }
-  else
-  {
-    // error
-    throw std::runtime_error(std::string("sp: checksum or header invalid for serialnum"));
-  }
-}
-
 void SerialProtocolBase::read_data(uint8_t* buf, const uint8_t did)
 {
   // check sensor existence to compute awaited len
@@ -966,11 +873,7 @@ void SerialProtocolBase::read_data(uint8_t* buf, const uint8_t did)
           if (!sensor->first->unpack(buf + SP_DATA_OFFSET))
             throw std::runtime_error(std::string("sp:sensor data storage not initialized"));
           // parse the data (sensor specific)
-          if (verbose)
-            std::cout << "sp: parsing answer" << std::endl;
           sensor->first->parse();
-          if (verbose)
-            std::cout << "sp: data parsed" << std::endl;
         }
         else
           throw std::runtime_error(std::string("sp:data with invalid checksum"));
@@ -1050,8 +953,9 @@ void SerialProtocolBase::read_error(uint8_t* buf)
   }
 }
 
-void SerialProtocolBase::read(bool local_throw_at_timeout)
+void SerialProtocolBase::read()
 {
+  uint8_t read_buf[SP_MAX_BUF_SIZE];
   // init the first bytes to null to not see spurious values when debugging
   std::memset(read_buf, 0, 7);
   size_t read_buf_len = 0;
@@ -1087,8 +991,7 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
           break;
         case SP_DID_SERIAL:
           if (verbose)
-            std::cerr << "sp: processing serialnum answer" << std::endl;
-          read_serialnum(read_buf);
+            std::cerr << "sp: serial answer decoding not yet implemented" << std::endl;
           break;
         case SP_DID_CALCNF:
           if (verbose)
@@ -1099,8 +1002,6 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
             std::cerr << "sp: calib description answer decoding not yet implemented" << std::endl;
           break;
         case SP_DID_ERR:  // process error
-          if (verbose)
-            std::cerr << "sp: error code sent" << std::endl;
           read_error(read_buf);
           break;
         case SP_DID_BCAST:
@@ -1109,7 +1010,7 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
           if (did >= SP_DID_LID1 && did <= SP_DID_LIDMAX)  // process data
           {
             if (verbose)
-              std::cout << "sp: processing data answer of sensor id " << (int)did << std::endl;
+              std::cout << "sp: processing data answer of sensor id " << did << std::endl;
             read_data(read_buf, did);
           }
           else  // process invalid datagram id
@@ -1121,15 +1022,8 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
     }
     else
     {
-      if (local_throw_at_timeout)
-      {
-        // nothing to await from sensor
-        throw std::runtime_error(std::string("sp: nothing to read (did you start streaming ?)"));
-      }
-      else
-      {
-        std::cout << "sp: nothing to read" << std::endl;
-      }
+      // nothing to await from sensor
+      throw std::runtime_error(std::string("sp: nothing to read (did you start streaming ?)"));
     }
   }
   catch (const std::exception& e)
