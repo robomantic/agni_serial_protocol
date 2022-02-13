@@ -11,6 +11,7 @@
 #include <ros/ros.h>
 #include <agni_serial_protocol/SetPeriod.h>
 #include <agni_serial_protocol/GetSerialNumber.h>
+#include <agni_serial_protocol/GetTopology.h>
 #include <agni_serial_protocol/GetDeviceMap.h>
 #endif
 
@@ -40,6 +41,9 @@ struct SensorType
   uint16_t data_length;
 };
 
+// TopologyElementContentDescriptor
+typedef std::vector<uint8_t> topoECD;
+
 class SensorBase
 {
 public:
@@ -56,12 +60,14 @@ public:
   {
     return len;
   }
-  const SensorType &get_type()
+  const SensorType& get_type()
   {
     return sensor_type;
   }
   virtual void publish() = 0;
   virtual bool parse() = 0;
+  void process_args();
+  std::string args;
 
 protected:
   void extract_timestamp(uint8_t* buf);
@@ -72,6 +78,8 @@ protected:
   uint32_t previous_timestamp;
   bool new_data;
   uint8_t base_sensor_id;
+  std::map<std::string, std::string> args_map_str;
+  std::map<std::string, float> args_map_float;
 
 private:
   static uint8_t base_sensor_count;
@@ -126,6 +134,9 @@ public:
 #endif
   std::string get_serial();
   void set_serial(std::string serial_number);
+  uint8_t get_topology_type();
+  std::vector<topoECD> get_topology_matrix(uint8_t& rows, uint8_t& cols);
+  void set_topology_matrix(const std::vector<topoECD>& topology, uint8_t rows, uint8_t cols);
 
   std::vector<std::pair<SensorBase*, bool>>& get_sensors()
   {
@@ -133,7 +144,7 @@ public:
   }
   std::pair<SensorBase*, bool>* get_sensor_by_idx(const uint8_t idx);
   bool exists_sensor(const uint8_t idx);
-  void add_sensor(const uint16_t data_len, const SensorType sensor_type);
+  void add_sensor(const uint16_t data_len, const SensorType sensor_type, const std::string args="");
   void publish_all();
 
   DeviceType device;
@@ -141,6 +152,10 @@ public:
 protected:
   std::vector<std::pair<SensorBase*, bool>> sensors;
   // std::vector<bool> active_sensors;
+  uint8_t topology_type;
+  // used for matrix topology
+  uint8_t topology_rows, topology_cols;
+  std::vector<topoECD> topology_ecds;
   uint32_t cached_max_stream_size;
   bool active_sensor_modified;
   std::string serialnum;
@@ -150,7 +165,7 @@ class SerialProtocolBase
 {
 public:
   explicit SerialProtocolBase(SerialCom* serial_com, const std::string device_filename = "",
-                              const std::string sensor_filename = "");
+                              const std::string sensor_filename = "", const std::string sensor_args="");
   ~SerialProtocolBase();
   bool init();
 #ifdef HAVE_ROS
@@ -177,6 +192,7 @@ public:
   void read_sensor_types(const uint8_t v);
   bool exists_device(const uint8_t dev_id);
   bool exists_sensor_driver(const uint16_t sen_driver_id);
+  bool get_sensor_driver_id(uint16_t &sen_driver_id, const std::string sen_driver_name);
   bool exists_sensor(const uint8_t sen_id);
 
   DeviceType get_device();
@@ -187,8 +203,10 @@ public:
 protected:
   void config();
   void req_serialnum();
+  void req_topology();
   void read_config(uint8_t* buf);
   void read_serialnum(uint8_t* buf);
+  void read_topology(uint8_t* buf);
   void read_error(uint8_t* buf);
   void read_data(uint8_t* buf, const uint8_t did);
   void read(bool local_throw_at_timeout);
@@ -202,37 +220,45 @@ protected:
   uint8_t compute_checksum(const uint8_t* buf, const uint32_t len);
 
   void send(const uint8_t* buf, const uint32_t len);
-  uint32_t gen_command(uint8_t* buf, const uint8_t destination, const uint8_t command,
-                       const uint32_t size, const uint16_t stride=1, const uint8_t* data = NULL);
+  uint32_t gen_command(uint8_t* buf, const uint8_t destination, const uint8_t command, const uint32_t size,
+                       const uint16_t stride = 1, const uint8_t* data = NULL);
   uint32_t gen_master_ping_req(uint8_t* buf);
   uint32_t gen_master_config_req(uint8_t* buf);
   uint32_t gen_sensor_trigger_req(uint8_t* buf, uint8_t sen_id);
   uint32_t gen_master_trigger_req(uint8_t* buf);
-  uint32_t gen_topo_req(uint8_t* buf);
+  uint32_t gen_topology_req(uint8_t* buf);
   uint32_t gen_serialnum_req(uint8_t* buf);
   uint32_t gen_period_master_req(uint8_t* buf, const std::map<uint8_t, uint16_t>& period_map);
   uint32_t gen_period_sensor_req(uint8_t* buf, const uint8_t sen_id, const uint16_t period);
+
+  void parse_sensor_args();
 
   uint8_t version;
   bool streaming;
   std::map<uint8_t, DeviceType> device_types;
   std::map<uint16_t, SensorType> sensor_types;
+  std::map<uint16_t, std::string> args_dict;
+
   SerialCom* s;
   std::string d_filename;
   std::string s_filename;
+  std::string s_args;
   Device dev;
   uint8_t read_buf[SP_MAX_BUF_SIZE];
 
 #ifdef HAVE_ROS
   ros::ServiceServer service_set_period;
   ros::ServiceServer service_get_serialnumber;
+  ros::ServiceServer service_get_topology;
   ros::ServiceServer service_get_devicemap;
   bool service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
                              agni_serial_protocol::SetPeriod::Response& res);
   bool service_get_devicemap_cb(agni_serial_protocol::GetDeviceMap::Request& req,
                                 agni_serial_protocol::GetDeviceMap::Response& res);
   bool service_get_serialnum_cb(agni_serial_protocol::GetSerialNumber::Request& req,
-                                   agni_serial_protocol::GetSerialNumber::Response& res);
+                                agni_serial_protocol::GetSerialNumber::Response& res);
+  bool service_get_topology_cb(agni_serial_protocol::GetTopology::Request& req,
+                               agni_serial_protocol::GetTopology::Response& res);
 
 #endif
 };
