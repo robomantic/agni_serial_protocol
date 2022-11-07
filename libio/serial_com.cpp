@@ -1,6 +1,6 @@
 /* ============================================================
  * Modified by Guillaume Walck 2019
- * 
+ *
  * Copyright (C) 2015 by Robert Haschke <rhaschke at techfak dot uni-bielefeld dot de>
  *
  * This file may be licensed under the terms of the
@@ -33,18 +33,14 @@
 #include <stdexcept>
 #include <iostream>
 
-
-
 using namespace std;
 
 namespace serial_protocol {
-
 
 const char *SerialCom::timeout_error::what() const throw()
 {
 	return "serial communication timed out";
 }
-
 
 SerialCom::SerialCom() :
  connected(false), verbose(false)
@@ -127,7 +123,7 @@ void SerialCom::disconnect()
 	close(fd);
 }
 
-size_t SerialCom::readFrame(uint8_t *buf, size_t len)
+size_t SerialCom::read(uint8_t *buf, size_t len)
 {
 	if (verbose)
 		printf("sc: trying to read %lu bytes\n", len);
@@ -147,15 +143,17 @@ size_t SerialCom::readFrame(uint8_t *buf, size_t len)
 			printf("sc: pselect result %d \n", res);
 		if (res == -1) throw std::runtime_error(strerror(errno));
 		if (res == 0) return index; // timeout
-		
+
 		// read a maximum of len bytes into buf (actual read count is in res)
 		if (verbose)
 			printf("sc: reading %lu bytes\n", len - index);
-		res = read(fd, buf + index, len - index);
+		res = ::read(fd, buf + index, len - index);
 		if (verbose)
 			printf("sc: read result %d \n", res);
+		if (res == 0)  // zero bytes read (after successful pselect) indicates disconnected device
+			throw std::runtime_error("sc: serial device disconnected");
 		if (res < 0)
-			throw std::runtime_error(std::string("sc: serial read error"));
+			throw std::runtime_error("sc: serial read error");
 		index += res;
 	}
 	if (verbose)
@@ -163,7 +161,7 @@ size_t SerialCom::readFrame(uint8_t *buf, size_t len)
 	return index;
 }
 
-size_t SerialCom::writeFrame(const uint8_t *buf, size_t len)
+size_t SerialCom::write(const uint8_t *buf, size_t len)
 {
 	if (!connected) throw std::runtime_error("sc: not connected to write");
 
@@ -176,10 +174,9 @@ size_t SerialCom::writeFrame(const uint8_t *buf, size_t len)
 			printf("%x ", buf[i]);
 		printf("\n");
 	}
-	size_t res = write(fd, buf, len);
+	ssize_t res = ::write(fd, buf, len);
 	if (res < 0)
 		throw std::runtime_error(strerror(errno));
-		//throw std::runtime_error(std::string("sc: serial write error"));
 	if (verbose)
 		printf("sc: written %lu bytes\n", res);
 
@@ -191,7 +188,7 @@ void SerialCom::flush()
 	unsigned char buf[256];
 	size_t read_len;
 	try{
-		read_len = readFrame(buf, 256); // read possibly incomplete frame
+		read_len = read(buf, 256); // read possibly incomplete frame
 	}
 	catch (const std::exception &e) {
 		std::cerr << e.what() << std::endl;
