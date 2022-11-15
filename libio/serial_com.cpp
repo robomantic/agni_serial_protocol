@@ -53,16 +53,8 @@ SerialCom::~SerialCom() {
 
 void SerialCom::setTimeOut(unsigned int msec)
 {
-	if (msec >= 1000)
-	{
-		timeout.tv_sec = msec/1000;
-		timeout.tv_nsec = (msec%1000) * 1e6;
-	}
-	else
-	{
-		timeout.tv_sec = 0;
-		timeout.tv_nsec = msec * 1e6;
-	}
+	timeout.tv_sec = msec / 1000;
+	timeout.tv_nsec = (msec % 1000) * 1e6;
 }
 
 void SerialCom::connect(const std::string &sDevice)
@@ -111,7 +103,6 @@ void SerialCom::connect(const std::string &sDevice)
 	FD_SET (fd,&fdset);
 
 	connected = true;
-  flush();
 }
 
 void SerialCom::disconnect()
@@ -183,18 +174,26 @@ size_t SerialCom::write(const uint8_t *buf, size_t len)
 	return res;
 }
 
-void SerialCom::flush()
+void SerialCom::flush(const std::chrono::milliseconds &timeout)
 {
 	unsigned char buf[256];
-	size_t read_len;
-	try{
-		read_len = read(buf, 256); // read possibly incomplete frame
+	size_t len = sizeof(buf);
+	auto now = std::chrono::steady_clock::now();
+	auto deadline = now + timeout;
+	try
+	{
+		// read remaining buffer
+		while (len == sizeof(buf) && now < deadline)
+		{
+			len = read(buf, sizeof(buf));
+			now = std::chrono::steady_clock::now();
+		}
 	}
 	catch (const std::exception &e) {
 		std::cerr << e.what() << std::endl;
 	}
-	if (verbose)
-		printf("sc: flushed %lu chars\n", read_len);
+	if (len == sizeof(buf))
+		throw std::runtime_error("flush() failed. Device is still streaming.");
 }
 
 }
