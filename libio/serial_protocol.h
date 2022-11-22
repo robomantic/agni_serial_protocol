@@ -144,7 +144,7 @@ public:
   }
   std::pair<SensorBase*, bool>* get_sensor_by_idx(const uint8_t idx);
   bool exists_sensor(const uint8_t idx);
-  void add_sensor(const uint16_t data_len, const SensorType sensor_type, const std::string args="");
+  void add_sensor(const uint16_t data_len, const SensorType sensor_type, const std::string args = "");
   void publish_all();
 
   DeviceType device;
@@ -165,7 +165,7 @@ class SerialProtocolBase
 {
 public:
   explicit SerialProtocolBase(SerialCom* serial_com, const std::string device_filename = "",
-                              const std::string sensor_filename = "", const std::string sensor_args="");
+                              const std::string sensor_filename = "", const std::string sensor_args = "");
   ~SerialProtocolBase();
   bool init();
 #ifdef HAVE_ROS
@@ -192,7 +192,7 @@ public:
   void read_sensor_types(const uint8_t v);
   bool exists_device(const uint8_t dev_id);
   bool exists_sensor_driver(const uint16_t sen_driver_id);
-  bool get_sensor_driver_id(uint16_t &sen_driver_id, const std::string sen_driver_name);
+  bool get_sensor_driver_id(uint16_t& sen_driver_id, const std::string sen_driver_name);
   bool exists_sensor(const uint8_t sen_id);
 
   DeviceType get_device();
@@ -262,5 +262,5 @@ protected:
 
 #endif
 };
-}
+}  // namespace serial_protocol
 #endif

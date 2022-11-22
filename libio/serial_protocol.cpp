@@ -56,7 +56,7 @@ void SensorBase::process_args()
     args_map_str.clear();
     args_map_float.clear();
 
-    char *token;
+    char* token;
     // way around the const char issue of s_args.c_str()
     std::vector<char> args_vect(args.begin(), args.end() + 1);
     // Do we have multiple args ?
@@ -77,9 +77,10 @@ void SensorBase::process_args()
       std::string s(token);
       size_t pos = s.find("=");
       // if no key, warn and pass
-      if(pos == std::string::npos)
+      if (pos == std::string::npos)
       {
-        std::cerr << "sp: sensor parse arg failed, no value found, ignoring entry. syntax is :var_name=var_value;" << std::endl;
+        std::cerr << "sp: sensor parse arg failed, no value found, ignoring entry. syntax is :var_name=var_value;"
+                  << std::endl;
       }
       else
       {
@@ -91,7 +92,6 @@ void SensorBase::process_args()
           float f = std::stof(value_str);
           if (args_map_float.find(key) == args_map_float.end())
           {
-
             args_map_float[key] = f;
           }
           else
@@ -101,11 +101,9 @@ void SensorBase::process_args()
         }
         catch (const std::exception& e)
         {
-          //std::cerr << e.what() << std::endl;
           if (args_map_str.find(key) == args_map_str.end())
           {
-
-            args_map_str[key]=  value_str;
+            args_map_str[key] = value_str;
           }
           else
           {
@@ -145,7 +143,6 @@ void SensorBase::extract_timestamp(uint8_t* buf)
 {
   std::memcpy((uint8_t*)&timestamp, buf, SP_TIMESTAMP_LEN);
 }
-
 
 /* **********************
  *
@@ -377,12 +374,12 @@ void SerialProtocolBase::parse_sensor_args()
   if (s_args.length())
   {
     std::map<std::string, std::string> sensor_args_map;
-    char *token;
+    char* token;
     // way around the const char issue of s_args.c_str()
-    std::vector<char> s_args_vect(s_args.begin(), s_args.end()+1);
+    std::vector<char> s_args_vect(s_args.begin(), s_args.end() + 1);
     // Do we have multiple args ?
     bool multi_args = false;
-    if (s_args.find(";")!=std::string::npos)
+    if (s_args.find(";") != std::string::npos)
     {
       // split at ";"
       token = std::strtok(s_args_vect.data(), ";");
@@ -400,7 +397,7 @@ void SerialProtocolBase::parse_sensor_args()
       std::string s(token);
       size_t pos = s.find(":");
       // if no key, warn and pass
-      if(pos == std::string::npos)
+      if (pos == std::string::npos)
       {
         std::cerr << "sp: parse sensor arg failed, no sensor type found, ignoring entry. syntax is :sensor_type:var_name=var_value" << std::endl;
       }
@@ -413,7 +410,8 @@ void SerialProtocolBase::parse_sensor_args()
         }
         else
         {
-          sensor_args_map[key] = sensor_args_map[key] + ";" + s.substr(pos + 1, std::string::npos);s.substr(pos + 1, std::string::npos);
+          sensor_args_map[key] = sensor_args_map[key] + ";" + s.substr(pos + 1, std::string::npos);
+          s.substr(pos + 1, std::string::npos);
         }
       }
       if (multi_args)
@@ -424,15 +422,15 @@ void SerialProtocolBase::parse_sensor_args()
 
     // convert the map to one using hex sensor types
     args_dict.clear();
-    for(auto const& p: sensor_args_map)
+    for (auto const& p : sensor_args_map)
     {
       uint16_t sen_driver_id;
-      //std::cout << "searching for " << p.first << std::endl;
+      // std::cout << "searching for " << p.first << std::endl;
       // find the sensor_driver_id by name
       if (get_sensor_driver_id(sen_driver_id, p.first))
       {
         args_dict[sen_driver_id] = p.second;
-        //std::cout << "    found  " << sen_driver_id << std::endl;
+        // std::cout << "    found  " << sen_driver_id << std::endl;
       }
     }
   }
@@ -440,7 +438,7 @@ void SerialProtocolBase::parse_sensor_args()
   if (verbose)
   {
     std::cout << " sensor_args dictionary" << std::endl;
-    for(auto const& p: args_dict)
+    for (auto const& p : args_dict)
       std::cout << " {" << p.first << " => " << p.second << "}" << '\n';
   }
 }
@@ -615,7 +613,7 @@ bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t con
       {
         // find args for this sensor_type
         std::string args = "";
-        if (args_dict.find(sen_type)!=args_dict.end())
+        if (args_dict.find(sen_type) != args_dict.end())
         {
           args = args_dict[sen_type];
         }
@@ -630,7 +628,8 @@ bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t con
     }
     else
     {
-      printf("sp: no sensor driver found for logical sensor %d with type %04X, check registred_devices.yaml\n", i, sen_type);
+      printf("sp: no sensor driver found for logical sensor %d with type %04X, check registred_devices.yaml\n", i,
+             sen_type);
       return false;
     }
   }
@@ -968,9 +967,9 @@ bool SerialProtocolBase::exists_sensor_driver(const uint16_t sen_driver_id)
 }
 
 // get the sen_driver_id by name in the database of registered_devices
-bool SerialProtocolBase::get_sensor_driver_id(uint16_t &sen_driver_id, const std::string sen_driver_name)
+bool SerialProtocolBase::get_sensor_driver_id(uint16_t& sen_driver_id, const std::string sen_driver_name)
 {
-  for(auto const& s: sensor_types)
+  for (auto const& s : sensor_types)
   {
     if (s.second.name == sen_driver_name)
     {
@@ -1811,4 +1810,4 @@ uint32_t SerialProtocolBase::gen_period_sensor_req(uint8_t* buf, const uint8_t s
   printf("sc: reflushed %lu chars\n", read_len);
 
 */
-}
+}  // namespace serial_protocol
