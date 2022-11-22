@@ -484,6 +484,7 @@ void SerialProtocolBase::init_ros(ros::NodeHandle& nh)
   // initialize services
   service_set_period =
       nh.advertiseService(node_prefix + "set_period", &SerialProtocolBase::service_set_period_cb, this);
+  service_send_cmd = nh.advertiseService(node_prefix + "send_cmd", &SerialProtocolBase::service_send_cmd_cb, this);
   service_get_serialnumber =
       nh.advertiseService(node_prefix + "get_serialnumber", &SerialProtocolBase::service_get_serialnum_cb, this);
   service_get_topology =
@@ -572,6 +573,58 @@ bool SerialProtocolBase::service_set_period_cb(agni_serial_protocol::SetPeriod::
   else
   {
     res.message = "Set period cannot be empty";
+  }
+  return true;
+}
+
+bool SerialProtocolBase::service_send_cmd_cb(agni_serial_protocol::SendCmd::Request& req,
+                                             agni_serial_protocol::SendCmd::Response& res)
+{
+  res.result = agni_serial_protocol::SendCmd::Response::FAILED;
+  // TODO write mutex
+
+  switch (req.command)
+  {
+    case SP_CMD_STOP_STREAM: {
+      try
+      {
+        stop_streaming();
+        res.result = agni_serial_protocol::SendCmd::Response::SUCCESS;
+      }
+      catch (const std::exception& e)
+      {
+        std::stringstream sstr;
+        sstr << "Failed to stop streaming: " << e.what();
+        res.message = sstr.str();
+      }
+      break;
+    }
+    case SP_CMD_START_STREAM_CONT_ALL: {
+      try
+      {
+        start_streaming(SP_CMD_START_STREAM_CONT_ALL);
+        res.result = agni_serial_protocol::SendCmd::Response::SUCCESS;
+      }
+      catch (const std::exception& e)
+      {
+        std::stringstream sstr;
+        sstr << "Failed to start streaming: " << e.what();
+        res.message = sstr.str();
+      }
+      break;
+    }
+    case SP_CMD_ALIVE: {
+      // just use the alive variable
+      res.result =
+          dev.alive ? agni_serial_protocol::SendCmd::Response::TRUE : agni_serial_protocol::SendCmd::Response::FALSE;
+      break;
+    }
+
+    default: {
+      std::stringstream sstr;
+      sstr << "unsupported command 0x" << std::hex << (int)req.command;
+      res.message = sstr.str();
+    }
   }
   return true;
 }

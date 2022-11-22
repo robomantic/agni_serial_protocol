@@ -33,6 +33,7 @@ if(catkin_FOUND)
   # Generate services in the 'srv' folder
   add_service_files(
     FILES
+    SendCmd.srv
     SetPeriod.srv
     GetDeviceMap.srv
     GetSerialNumber.srv

@@ -10,6 +10,7 @@
 #ifdef HAVE_ROS
 #include <ros/ros.h>
 #include <agni_serial_protocol/SetPeriod.h>
+#include <agni_serial_protocol/SendCmd.h>
 #include <agni_serial_protocol/GetSerialNumber.h>
 #include <agni_serial_protocol/GetTopology.h>
 #include <agni_serial_protocol/GetDeviceMap.h>
@@ -259,12 +260,14 @@ protected:
   diagnostic_msgs::DiagnosticStatus diagnostic_state;
   void update_diagnostic(const uint8_t& level, const std::string& message = "");
   ros::ServiceServer service_set_period;
+  ros::ServiceServer service_send_cmd;
   ros::ServiceServer service_get_serialnumber;
   ros::ServiceServer service_get_topology;
   ros::ServiceServer service_get_devicemap;
   ros::ServiceServer service_clear_warnings;
   bool service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
                              agni_serial_protocol::SetPeriod::Response& res);
+  bool service_send_cmd_cb(agni_serial_protocol::SendCmd::Request& req, agni_serial_protocol::SendCmd::Response& res);
   bool service_get_devicemap_cb(agni_serial_protocol::GetDeviceMap::Request& req,
                                 agni_serial_protocol::GetDeviceMap::Response& res);
   bool service_get_serialnum_cb(agni_serial_protocol::GetSerialNumber::Request& req,

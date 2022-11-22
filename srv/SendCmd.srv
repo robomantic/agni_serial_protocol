@@ -1,0 +1,14 @@
+# Command accessible to the user
+uint8 command
+uint8 STOP_STREAM=0
+uint8 ALIVE=240
+uint8 START_STREAM_CONT_ALL=241
+byte[] args
+---
+int8 result
+int8 FAILED=-1
+int8 FALSE=0
+int8 SUCCESS=1
+int8 TRUE=1
+int8 INCOMPLETE=2
+string message
