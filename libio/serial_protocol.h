@@ -13,6 +13,8 @@
 #include <agni_serial_protocol/GetSerialNumber.h>
 #include <agni_serial_protocol/GetTopology.h>
 #include <agni_serial_protocol/GetDeviceMap.h>
+#include <diagnostic_msgs/DiagnosticStatus.h>
+#include <std_srvs/Empty.h>
 #endif
 
 // constants
@@ -148,6 +150,7 @@ public:
   void publish_all();
 
   DeviceType device;
+  bool alive;
 
 protected:
   std::vector<std::pair<SensorBase*, bool>> sensors;
@@ -197,14 +200,16 @@ public:
 
   DeviceType get_device();
   bool verbose;
-  std::string service_prefix;
+  std::string node_prefix;
   bool throw_at_timeout;
 
 protected:
   void config();
   void req_serialnum();
   void req_topology();
+  void ping();
   void read_config(uint8_t* buf);
+  void read_no_data(uint8_t* buf);
   void read_serialnum(uint8_t* buf);
   void read_topology(uint8_t* buf);
   void read_error(uint8_t* buf);
@@ -245,12 +250,19 @@ protected:
   std::string s_args;
   Device dev;
   uint8_t read_buf[SP_MAX_BUF_SIZE];
+  uint8_t last_cmd;
+  bool ping_requested;
 
 #ifdef HAVE_ROS
+  ros::NodeHandle nh;
+  ros::Publisher diag_pub;
+  diagnostic_msgs::DiagnosticStatus diagnostic_state;
+  void update_diagnostic(const uint8_t& level, const std::string& message = "");
   ros::ServiceServer service_set_period;
   ros::ServiceServer service_get_serialnumber;
   ros::ServiceServer service_get_topology;
   ros::ServiceServer service_get_devicemap;
+  ros::ServiceServer service_clear_warnings;
   bool service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
                              agni_serial_protocol::SetPeriod::Response& res);
   bool service_get_devicemap_cb(agni_serial_protocol::GetDeviceMap::Request& req,
@@ -259,6 +271,7 @@ protected:
                                 agni_serial_protocol::GetSerialNumber::Response& res);
   bool service_get_topology_cb(agni_serial_protocol::GetTopology::Request& req,
                                agni_serial_protocol::GetTopology::Response& res);
+  bool service_clear_diagnostic_warnings_cb(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res);
 
 #endif
 };

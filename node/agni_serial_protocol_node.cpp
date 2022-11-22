@@ -105,16 +105,15 @@ int main(int argc, char** argv)
     p.verbose = bVerbose;
     p.throw_at_timeout = !bIgnoreTimeout;
     std::cout << "initializing serial protocol\n";
+    std::cout << "initializing ros\n";
+    p.init_ros(nh);  // must be first to get diagnostic messages over ROS when initializing communication with the
+                     // device
+    std::cout << "initialized ros\n";
     if (p.init())
     {
       std::cout << "initialized\n";
-      std::cout << "initializing ros\n";
-      p.init_ros(nh);
-      std::cout << "initialized ros\n";
-
       std::cout << "start streaming\n";
       p.start_streaming();
-
       std::cout << "streaming (press ctrl-c to quit)\n";
       while (bRun && ros::ok())  // loop until Ctrl-C
       {

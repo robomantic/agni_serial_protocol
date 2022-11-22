@@ -12,6 +12,28 @@
 #include <utility>
 #include <map>
 
+#ifdef HAVE_ROS
+#define sp_diag_msg(args, level)                                                                                       \
+  do                                                                                                                   \
+  {                                                                                                                    \
+    std::stringstream __sstr;                                                                                          \
+    __sstr << args;                                                                                                    \
+    std::cerr << __sstr.str() << std::endl;                                                                            \
+    update_diagnostic(level, __sstr.str());                                                                            \
+  } while (0)
+#else
+#define sp_error(args)                                                                                                 \
+  do                                                                                                                   \
+  {                                                                                                                    \
+    std::stringstream __sstr;                                                                                          \
+    __sstr << args;                                                                                                    \
+    std::cerr << __sstr.str();                                                                                         \
+  } while (0)
+#endif
+
+#define sp_error(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::ERROR)
+#define sp_warn(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::WARN)
+
 namespace serial_protocol
 {
 uint8_t SensorBase::base_sensor_count{ 0 };
@@ -191,6 +213,7 @@ Device::Device()
 {
   device.id = 0;
   topology_type = 0;
+  alive = false;
 }
 
 void Device::init(const DeviceType dev_type)
@@ -313,7 +336,7 @@ void Device::add_sensor(const uint16_t data_len, const SensorType sensor_type, c
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    std::cerr << "sp: could not add a sensor" << e.what() << std::endl;
     throw std::runtime_error("sp: could not add a sensor");
   }
 }
@@ -336,13 +359,14 @@ void Device::publish_all()
 SerialProtocolBase::SerialProtocolBase(SerialCom* serial_com, const std::string device_filename,
                                        const std::string sensor_filename, const std::string sensor_args)
   : verbose(false)
-  , service_prefix("")
+  , node_prefix("")
   , throw_at_timeout(true)
   , streaming(false)
   , s(serial_com)
   , d_filename(device_filename)
   , s_filename(sensor_filename)
   , s_args(sensor_args)
+  , last_cmd(SP_CMD_NONE)
 {
 }
 
@@ -358,11 +382,15 @@ bool SerialProtocolBase::init()
     config();
     req_serialnum();
     req_topology();
+#ifdef HAVE_ROS
+    // initialize ros for devices here because the device are now created
+    dev.init_ros(nh);
+#endif
     return true;
   }
   catch (const std::exception& e)
   {
-    std::cerr << "sp: init failed:" << e.what() << std::endl;
+    sp_error("sp: init failed:" << e.what() << std::endl);
     return false;
   }
 }
@@ -399,7 +427,9 @@ void SerialProtocolBase::parse_sensor_args()
       // if no key, warn and pass
       if (pos == std::string::npos)
       {
-        std::cerr << "sp: parse sensor arg failed, no sensor type found, ignoring entry. syntax is :sensor_type:var_name=var_value" << std::endl;
+        sp_warn(
+            "sp: parse sensor arg failed, no sensor type found, ignoring entry. syntax is "
+            ":sensor_type:var_name=var_value");
       }
       else
       {
@@ -446,17 +476,22 @@ void SerialProtocolBase::parse_sensor_args()
 #ifdef HAVE_ROS
 void SerialProtocolBase::init_ros(ros::NodeHandle& nh)
 {
-  dev.init_ros(nh);
-  // initialize set_period services
-  service_prefix = ros::this_node::getName() + "/";
+  this->nh = nh;
+  node_prefix = ros::this_node::getName() + "/";
+  diagnostic_state.level = diagnostic_msgs::DiagnosticStatus::OK;
+  // initialize publishers
+  diag_pub = nh.advertise<diagnostic_msgs::DiagnosticStatus>(node_prefix + "/state", 10, true);  // latched
+  // initialize services
   service_set_period =
-      nh.advertiseService(service_prefix + "set_period", &SerialProtocolBase::service_set_period_cb, this);
+      nh.advertiseService(node_prefix + "set_period", &SerialProtocolBase::service_set_period_cb, this);
   service_get_serialnumber =
-      nh.advertiseService(service_prefix + "get_serialnumber", &SerialProtocolBase::service_get_serialnum_cb, this);
+      nh.advertiseService(node_prefix + "get_serialnumber", &SerialProtocolBase::service_get_serialnum_cb, this);
   service_get_topology =
-      nh.advertiseService(service_prefix + "get_topology", &SerialProtocolBase::service_get_topology_cb, this);
+      nh.advertiseService(node_prefix + "get_topology", &SerialProtocolBase::service_get_topology_cb, this);
   service_get_devicemap =
-      nh.advertiseService(service_prefix + "get_devicemap", &SerialProtocolBase::service_get_devicemap_cb, this);
+      nh.advertiseService(node_prefix + "get_devicemap", &SerialProtocolBase::service_get_devicemap_cb, this);
+  service_clear_warnings = nh.advertiseService(node_prefix + "clear_warnings",
+                                               &SerialProtocolBase::service_clear_diagnostic_warnings_cb, this);
 }
 
 bool SerialProtocolBase::service_set_period_cb(agni_serial_protocol::SetPeriod::Request& req,
@@ -578,6 +613,15 @@ bool SerialProtocolBase::service_get_devicemap_cb(agni_serial_protocol::GetDevic
   return true;
 }
 
+bool SerialProtocolBase::service_clear_diagnostic_warnings_cb(std_srvs::Empty::Request& req,
+                                                              std_srvs::Empty::Response& res)
+{
+  if (diagnostic_state.level == diagnostic_msgs::DiagnosticStatus::WARN)
+  {
+    update_diagnostic(diagnostic_msgs::DiagnosticStatus::OK);
+  }
+  return true;
+}
 #endif
 
 void SerialProtocolBase::config()
@@ -592,10 +636,29 @@ void SerialProtocolBase::config()
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: failed to config " << e.what() << std::endl);
     throw std::runtime_error("sp: failed to config");
   }
   read(true);
+}
+
+void SerialProtocolBase::ping()
+{
+  uint8_t send_buf[20];
+  // request config
+  uint32_t send_buf_len = gen_master_ping_req(send_buf);
+  try
+  {
+    s->write(send_buf, (size_t)send_buf_len);
+  }
+  catch (const std::exception& e)
+  {
+    sp_error("sp: failed to send ping request " << e.what() << std::endl);
+    throw std::runtime_error("sp: failed to send ping request");
+  }
+  // no need to read here as ping will occur during normal update
+  // read(true);
+  ping_requested = true;
 }
 
 bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t config_num)
@@ -622,7 +685,7 @@ bool SerialProtocolBase::init_device_from_config(uint8_t* buf, const uint8_t con
       }
       catch (const std::exception& e)
       {
-        std::cerr << e.what() << std::endl;
+        sp_error(e.what() << std::endl);
         return false;
       }
     }
@@ -647,7 +710,7 @@ void SerialProtocolBase::req_serialnum()
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: failed to req serial " << e.what());
     throw std::runtime_error("sp: failed to req serial");
   }
   read(false);  // function might not be implemented in the device, so ignore if no response
@@ -664,7 +727,7 @@ void SerialProtocolBase::req_topology()
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: failed to req topology " << e.what());
     throw std::runtime_error("sp: failed to req topology");
   }
   read(false);  // function might not be implemented in the device, so ignore if no response
@@ -710,7 +773,7 @@ void SerialProtocolBase::set_period(const uint8_t sen_id, const uint16_t period)
     }
     catch (const std::exception& e)
     {
-      std::cerr << e.what() << std::endl;
+      sp_error("sp: failed to set period " << e.what());
       throw std::runtime_error("sp: failed to set period");
     }
   }
@@ -736,7 +799,7 @@ void SerialProtocolBase::set_periods(const std::map<uint8_t, uint16_t> period_ma
       }
       catch (const std::exception& e)
       {
-        std::cerr << e.what() << std::endl;
+        sp_error("sp: failed to set periods " << e.what());
         throw std::runtime_error("sp: failed to set periods");
       }
     }
@@ -1016,7 +1079,7 @@ void SerialProtocolBase::trigger(const uint8_t mode, const uint8_t sen_id)
       }
       catch (const std::exception& e)
       {
-        std::cerr << e.what() << std::endl;
+        sp_error("sp: failed to trigger " << e.what());
         throw std::runtime_error("sp: failed to trigger");
       }
     }
@@ -1034,6 +1097,12 @@ void SerialProtocolBase::trigger(const uint8_t mode, const uint8_t sen_id)
 void SerialProtocolBase::update()
 {
   read(throw_at_timeout);
+#ifdef HAVE_ROS
+  if (!dev.alive)
+    update_diagnostic(diagnostic_msgs::DiagnosticStatus::STALE);
+  else
+    update_diagnostic(diagnostic_msgs::DiagnosticStatus::OK);
+#endif
 }
 
 void SerialProtocolBase::publish()
@@ -1043,6 +1112,20 @@ void SerialProtocolBase::publish()
   ros::spinOnce();
 #endif
 }
+
+#ifdef HAVE_ROS
+void SerialProtocolBase::update_diagnostic(const uint8_t& level, const std::string& message)
+{
+  if (diagnostic_state.level == level && diagnostic_state.message == message)
+    return;
+  else
+  {
+    diagnostic_state.level = level;
+    diagnostic_state.message = message;
+    diag_pub.publish(diagnostic_state);
+  }
+}
+#endif
 
 void SerialProtocolBase::read_config(uint8_t* buf)
 {
@@ -1067,8 +1150,8 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   buf_len = s->read(buf + SP_VERSION_OFFSET, SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN);
   if (buf_len < SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN)
   {
-    std::cerr << "sp: incorrect config header size: " << buf_len << " < "
-              << SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN << "\n";
+    sp_error("sp: incorrect config header size: " << buf_len << " < "
+                                                  << SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN);
     throw std::runtime_error("sp: device did not answer enough data");
   }
   // read versions
@@ -1080,8 +1163,8 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   }
   else
   {
-    std::cerr << "sp: found unknown version ("
-              << "0x" << std::uppercase << std::hex << version << ")\n";
+    sp_error("sp: found unknown version ("
+             << "0x" << std::uppercase << std::hex << version << ")");
     throw std::runtime_error("sp: unsupported version");
   }
 
@@ -1094,8 +1177,8 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   // create a device
   if (!set_device(buf[SP_DEVID_OFFSET]))
   {
-    std::cerr << "sp:device with id " << (int)buf[SP_DEVID_OFFSET]
-              << " is not a known device type (check device_types.yaml)" << std::endl;
+    sp_error("sp:device with id " << (int)buf[SP_DEVID_OFFSET]
+                                  << " is not a known device type (check device_types.yaml)");
     throw std::runtime_error("sp: device type not found");
   }
 
@@ -1109,14 +1192,14 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: device failed to answer " << e.what());
     throw std::runtime_error("sp: device failed to answer");
   }
   // check data
   if (config_len != (size_t)(config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN))
   {
-    std::cerr << "sp: read " << config_len << " bytes of config_len instead of "
-              << config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN << std::endl;
+    sp_error("sp: read " << config_len << " bytes of config_len instead of "
+                         << config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN);
     throw std::runtime_error("sp: incomplete sensor description datagram");
   }
   // validate the full frame
@@ -1136,6 +1219,18 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   }
 }
 
+void SerialProtocolBase::read_no_data(uint8_t* buf)
+{
+  // read one additional bytes to finish the buffer
+  size_t buf_len = 0;
+  buf_len = s->read(buf + SP_DATA_OFFSET, SP_CHKSUM_LEN);
+  if (buf_len < SP_CHKSUM_LEN)
+  {
+    sp_error("sp: incorrect size nodata read: " << buf_len << " < " << SP_CHKSUM_LEN);
+    throw std::runtime_error("sp: device did not answer enough bytes for a no data read");
+  }
+}
+
 void SerialProtocolBase::read_serialnum(uint8_t* buf)
 {
   // read one additional byte to know the length
@@ -1143,7 +1238,7 @@ void SerialProtocolBase::read_serialnum(uint8_t* buf)
   buf_len = s->read(buf + SP_SER_SZ_OFFSET, SP_SER_SZ_LEN);
   if (buf_len < SP_SER_SZ_LEN)
   {
-    std::cerr << "sp: incorrect serialnum header size: " << buf_len << " < " << SP_SER_SZ_LEN << "\n";
+    sp_error("sp: incorrect serialnum header size: " << buf_len << " < " << SP_SER_SZ_LEN);
     throw std::runtime_error("sp: device did not answer enough data for serialnum");
   }
   // read serial data
@@ -1157,14 +1252,13 @@ void SerialProtocolBase::read_serialnum(uint8_t* buf)
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: device failed to answer " << e.what());
     throw std::runtime_error("sp: device failed to answer");
   }
   // check data
   if (sernum_len != (size_t)(sernum_awaitedlen + SP_CHKSUM_LEN))
   {
-    std::cerr << "sp: read " << sernum_len << " bytes of sernum_len instead of " << sernum_awaitedlen + SP_CHKSUM_LEN
-              << std::endl;
+    sp_error("sp: read " << sernum_len << " bytes of sernum_len instead of " << sernum_awaitedlen + SP_CHKSUM_LEN);
     throw std::runtime_error("sp: incomplete serialnum datagram");
   }
   // validate the full frame
@@ -1187,7 +1281,7 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
   buf_len = s->read(buf + SP_TOP_TYPE_OFFSET, SP_TOP_TYPE_LEN);
   if (buf_len < SP_TOP_TYPE_LEN)
   {
-    std::cerr << "sp: incorrect topo header size: " << buf_len << " < " << SP_TOP_TYPE_LEN << "\n";
+    sp_error("sp: incorrect topo header size: " << buf_len << " < " << SP_TOP_TYPE_LEN);
     throw std::runtime_error("sp: device did not answer enough data for topology request");
   }
   // save type
@@ -1215,14 +1309,14 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
       }
       catch (const std::exception& e)
       {
-        std::cerr << e.what() << std::endl;
+        sp_error("sp: device failed to answer ecd size " << e.what());
         throw std::runtime_error("sp: device failed to answer ecd size");
       }
 
       // check size
       if (ecd_len_byteread != (size_t)(SP_TOP_ECD_SZ_LEN))
       {
-        std::cerr << "sp: topology ECD size missing " << std::endl;
+        sp_error("sp: topology ECD size missing");
         throw std::runtime_error("sp: incomplete topology ECD datagram");
       }
       else
@@ -1236,14 +1330,13 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
         }
         catch (const std::exception& e)
         {
-          std::cerr << e.what() << std::endl;
+          sp_error("sp: device failed to answer ecd data " << e.what());
           throw std::runtime_error("sp: device failed to answer ecd data");
         }
         // check data size
         if (ecd_data_byteread != (size_t)(ecd_len))
         {
-          std::cerr << "sp: topology read " << ecd_data_byteread << " ECD data instead of " << ecd_len << " awaited"
-                    << std::endl;
+          sp_error("sp: topology read " << ecd_data_byteread << " ECD data instead of " << ecd_len << " awaited");
           throw std::runtime_error("sp: incomplete topology ECD datagram");
         }
         else
@@ -1273,14 +1366,14 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
     }
     catch (const std::exception& e)
     {
-      std::cerr << e.what() << std::endl;
+      sp_error("sp: checksum missing for topo " << e.what());
       throw std::runtime_error("sp: checksum missing for topo");
     }
 
     // check checksum is there
     if (checksum_len != (size_t)(SP_CHKSUM_LEN))
     {
-      std::cerr << "sp: topology has no checksum " << std::endl;
+      sp_error("sp: topology has no checksum");
       throw std::runtime_error("sp: topology misses checksum");
     }
 
@@ -1301,7 +1394,7 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
     switch (topo_type)
     {
       default:
-        std::cerr << "sp: topo different than matrix type are not yet supported \n";
+        sp_error("sp: topo different than matrix type are not yet supported");
         throw std::runtime_error("sp: only topology in matrix type are supported for now");
     }
   }
@@ -1349,14 +1442,14 @@ void SerialProtocolBase::read_data(uint8_t* buf, const uint8_t did)
     }
     else
     {
-      std::cerr << "sp:received data of an inactive sensor id " << (int)did << std::endl;
+      sp_error("sp:received data of an inactive sensor id " << (int)did);
       throw std::runtime_error("sp:inactive sensor id");
     }
   }
   else
   {
     // TODO we should maybe flush until we see a header ?
-    std::cerr << "sp:found unknown sensor id " << (int)did << std::endl;
+    sp_error("sp:found unknown sensor id " << (int)did);
     throw std::runtime_error("sp:unknown sensor id");
   }
 }
@@ -1365,31 +1458,35 @@ void SerialProtocolBase::read_error(uint8_t* buf)
 {
   size_t error_len = 0;
   error_len = s->read(buf + SP_ERR_TYP_OFFSET, SP_ERR_TYP_LEN + SP_CHKSUM_LEN);
+  std::stringstream sstr;
+  sstr << "sp: device sent an error:";
   if (error_len == SP_ERR_TYP_LEN + SP_CHKSUM_LEN)
   {
     uint8_t error_code = buf[SP_ERR_TYP_OFFSET];
-    std::cerr << "sp: device sent an error:";
     switch (error_code)
     {
       case SP_ERR_CHKSUM:
         if (!valid_checksum(buf, 5))
+        {
+          // TODO should we throw for a checksum error ?
           throw std::runtime_error("sp:err, chksum invalid checksum");
-        std::cerr << " device says checksum error " << std::endl;
+        }
+        sstr << " device says checksum error ";
         break;
       case SP_ERR_UNKNCMD:
         if (!valid_checksum(buf, 5))
           throw std::runtime_error("sp:err, cmd invalid checksum");
-        std::cerr << " device says unknown command " << std::endl;
+        sstr << " device says unknown command ";
         break;
       case SP_ERR_UNKNOWN:
         if (!valid_checksum(buf, 5))
           throw std::runtime_error("sp:err, unk invalid checksum");
-        std::cerr << " device encountered an unknown error" << std::endl;
+        sstr << " device encountered an unknown error";
         break;
       case SP_ERR_UNKNSID:
         if (!valid_checksum(buf, 5))
           throw std::runtime_error("sp:err, sid invalid checksum");
-        std::cerr << " device encountered an unknown sensor id" << std::endl;
+        sstr << " device encountered an unknown sensor id";
         break;
       default:
         if (error_code > 0 && error_code < SP_ERR_STRMAX)
@@ -1400,18 +1497,20 @@ void SerialProtocolBase::read_error(uint8_t* buf)
           // read str_len because one character was already read but checksum is still to be read
           uint8_t str_len = error_code;  // include the checksum
           s->read(buf + SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN + SP_CHKSUM_LEN,
-                  str_len); // read the reminder of the string
+                  str_len);  // read the reminder of the string
           if (!valid_checksum(buf, SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN + str_len + SP_CHKSUM_LEN))
             throw std::runtime_error("sp:err, string invalid checksum");
           memcpy(strbuf, buf + SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN, str_len);
           strbuf[str_len] = '\0';  // end of string
-          std::cerr << " device reports error: " << strbuf << std::endl;
+          sstr << " device reports error: " << strbuf;
         }
         else
         {
-          std::cerr << " device encountered an undocumented error" << std::endl;
+          sstr << " device encountered an undocumented error";
         }
     }
+    // TODO should those errors be warnings only (they are device reported errors not driver errors)
+    sp_warn(sstr.str());
     return;
   }
 
@@ -1419,10 +1518,9 @@ void SerialProtocolBase::read_error(uint8_t* buf)
   if (error_len == SP_ERR_TYP_LEN && buf[SP_ERR_TYP_OFFSET] == SP_ERR_UNKNCMD)
   {
     // ignore checksum, and fake that the read was successful
-    std::cerr << " device says unknown command, but didn't send a checksum. Consider updating the firmware to fix this bug." << std::endl;
+    sp_warn("device says unknown command, but didn't send a checksum. Consider updating the firmware to fix this bug.");
     return;
   }
-
   throw std::runtime_error("sp:err, invalid error message");
 }
 
@@ -1444,8 +1542,12 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
       {
         if (verbose)
           std::cout << "sp: found header 0x" << std::hex << (int)read_buf[0] << " 0x" << (int)read_buf[1] << std::endl;
+        // TODO should we throw of just flush and continue ?
         throw std::runtime_error("sp:invalid header");
       }
+
+      // device is alive
+      dev.alive = true;
       // decode datagram ID
       uint8_t did = read_buf[SP_DID_OFFSET];
       // read additional data depending on the datagram id
@@ -1455,31 +1557,49 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
           if (verbose)
             std::cout << "sp: processing config answer" << std::endl;
           read_config(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_TOPOL:
           if (verbose)
-            std::cerr << "sp: processing topolgy answer" << std::endl;
+            std::cout << "sp: processing topolgy answer" << std::endl;
           read_topology(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_SERIAL:
           if (verbose)
-            std::cerr << "sp: processing serialnum answer" << std::endl;
+            std::cout << "sp: processing serialnum answer" << std::endl;
           read_serialnum(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_CALCNF:
           if (verbose)
             std::cerr << "sp: calib config answer decoding not yet implemented" << std::endl;
+          read_no_data(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_CALDSC:
           if (verbose)
             std::cerr << "sp: calib description answer decoding not yet implemented" << std::endl;
+          read_no_data(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_ERR:  // process error
           if (verbose)
             std::cerr << "sp: error code sent" << std::endl;
           read_error(read_buf);
+          last_cmd = SP_CMD_NONE;
+          break;
+        case SP_DID_PING:
+          if (verbose)
+            std::cout << "sp: ping answer received" << std::endl;
+          read_no_data(read_buf);
+          // clear the flag
+          ping_requested = false;
+          last_cmd = SP_CMD_NONE;
           break;
         case SP_DID_BCAST:
+          read_no_data(read_buf);
+          last_cmd = SP_CMD_NONE;
           break;
         default:
           if (did >= SP_DID_LID1 && did <= SP_DID_LIDMAX)  // process data
@@ -1487,34 +1607,90 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
             if (verbose)
               std::cout << "sp: processing data answer of sensor id " << (int)did << std::endl;
             read_data(read_buf, did);
+            last_cmd = SP_CMD_NONE;
           }
           else  // process invalid datagram id
           {
-            std::cerr << "sp:found datagram id 0x" << std::hex << (int)did << std::endl;
+            sp_error("sp:found datagram id 0x" << std::hex << (int)did);
+            read_no_data(read_buf);
+            last_cmd = SP_CMD_NONE;
             throw std::runtime_error("sp:unknown datagram id");
           }
       }
     }
     else
     {
-      if (local_throw_at_timeout)
+      // react depending on last command
+      switch (last_cmd)
       {
-        // nothing to await from sensor
-        throw std::runtime_error("sp: nothing to read (did you start streaming ?)");
-      }
-      else
-      {
-        std::cout << "sp: nothing to read" << std::endl;
+        case SP_CMD_NONE: {
+          // if last cmd is empty, device is either stopped (normal to not receive anything)
+          // or streaming (not normal to receive anything)
+
+          // proceed to check if device is alive
+          if (ping_requested)
+          {
+            // ping was already requested but not answered
+            dev.alive = false;
+            ping_requested = false;
+            if (local_throw_at_timeout)
+            {
+              // nothing to await from sensor
+              sp_error("sp: device does not answer to ping");
+              throw std::runtime_error("sp: device does not answer to ping");
+            }
+            else
+            {
+              sp_warn("sp: device does not answer to ping");
+            }
+          }
+          else
+          {
+            // no ping request yet, request one
+            ping();
+          }
+          break;
+        }
+        // all commands awaiting an answer
+        case SP_CMD_CONFRQ:
+        case SP_CMD_TOPORQ:
+        case SP_CMD_SERIAL:
+        case SP_CMD_CALCNF:
+        case SP_CMD_CALDSC: {
+          std::stringstream sstr;
+          sstr << "sp: no answer received from the device to command " << std::hex << (int)last_cmd;
+          if (local_throw_at_timeout)
+          {
+            sp_error(sstr.str());
+            // nothing to await from sensor
+            throw std::runtime_error(sstr.str());
+          }
+          else
+          {
+            sp_warn(sstr.str());
+            last_cmd = SP_CMD_NONE;
+          }
+          break;
+        }
+        case SP_CMD_ALIVE:
+        // we got no response to our ping but wait for another timeout
+        // (flag ping_requested is still set)
+        default:  // other commands not awaiting an answer
+          last_cmd = SP_CMD_NONE;
       }
     }
   }
   catch (const std::exception& e)
   {
-    std::cerr << " " << e.what() << std::endl;
-    std::cout << "sp: header 0x" << std::hex << (int)read_buf[0] << " 0x" << std::hex << (int)read_buf[1] << std::endl;
-    std::cout << "sp: data 0x" << std::hex << (int)read_buf[2] << " 0x" << std::hex << (int)read_buf[3] << " 0x"
-              << std::hex << (int)read_buf[4] << " 0x" << std::hex << (int)read_buf[5] << " 0x" << std::hex
-              << (int)read_buf[6] << std::endl;
+    sp_error(" " << e.what());
+    if (verbose)
+    {
+      std::cout << "sp: header 0x" << std::hex << (int)read_buf[0] << " 0x" << std::hex << (int)read_buf[1]
+                << std::endl;
+      std::cout << "sp: data 0x" << std::hex << (int)read_buf[2] << " 0x" << std::hex << (int)read_buf[3] << " 0x"
+                << std::hex << (int)read_buf[4] << " 0x" << std::hex << (int)read_buf[5] << " 0x" << std::hex
+                << (int)read_buf[6] << std::endl;
+    }
 
     throw;
   }
@@ -1667,7 +1843,7 @@ void SerialProtocolBase::start_streaming(const uint8_t mode)
     }
     catch (const std::exception& e)
     {
-      std::cerr << e.what() << std::endl;
+      sp_error("sp: failed to start streaming " << e.what());
       throw std::runtime_error("sp: failed to start streaming");
     }
   }
@@ -1686,7 +1862,7 @@ void SerialProtocolBase::stop_streaming()
   }
   catch (const std::exception& e)
   {
-    std::cerr << e.what() << std::endl;
+    sp_error("sp: failed to stop streaming " << e.what());
     throw std::runtime_error("sp: failed to stop streaming");
   }
 }
@@ -1707,6 +1883,7 @@ void SerialProtocolBase::send(const uint8_t* buf, const uint32_t len)
 uint32_t SerialProtocolBase::gen_command(uint8_t* buf, const uint8_t destination, const uint8_t command,
                                          const uint32_t size, const uint16_t stride, const uint8_t* data)
 {
+  last_cmd = command;
   // memset(buf, HEADER, HEADER_LEN * sizeof(uint8_t)); // cannot be done due to
   // little endianess
   memset(buf, SP_HDR1, sizeof(uint8_t));

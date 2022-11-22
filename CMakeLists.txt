@@ -12,7 +12,9 @@ if(catkin_FOUND)
   find_package(catkin REQUIRED COMPONENTS
     roscpp
     sensor_msgs
+    diagnostic_msgs
     std_msgs
+    std_srvs
     tactile_msgs
     message_generation
   )
@@ -44,7 +46,7 @@ if(catkin_FOUND)
   catkin_package(
   #  INCLUDE_DIRS include
   #  LIBRARIES agni_serial_protocol
-  CATKIN_DEPENDS roscpp sensor_msgs std_msgs tactile_msgs message_runtime
+  CATKIN_DEPENDS roscpp sensor_msgs diagnostic_msgs std_msgs std_srvs tactile_msgs message_runtime
   #  DEPENDS system_lib
   )
   include_directories(
