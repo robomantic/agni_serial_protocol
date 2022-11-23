@@ -17,22 +17,28 @@
   do                                                                                                                   \
   {                                                                                                                    \
     std::stringstream __sstr;                                                                                          \
+    uint8_t __level = level;                                                                                           \
+    if (__level == diagnostic_msgs::DiagnosticStatus::ERROR)                                                           \
+      __sstr << "ERROR: ";                                                                                             \
+    if (__level == diagnostic_msgs::DiagnosticStatus::WARN)                                                            \
+      __sstr << "WARNING: ";                                                                                           \
     __sstr << args;                                                                                                    \
     std::cerr << __sstr.str() << std::endl;                                                                            \
     update_diagnostic(level, __sstr.str());                                                                            \
   } while (0)
+#define sp_error(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::ERROR)
+#define sp_warn(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::WARN)
 #else
-#define sp_error(args)                                                                                                 \
+#define sp_diag_msg(args, level)                                                                                       \
   do                                                                                                                   \
   {                                                                                                                    \
     std::stringstream __sstr;                                                                                          \
     __sstr << args;                                                                                                    \
-    std::cerr << __sstr.str();                                                                                         \
+    std::cerr << level << __sstr.str();                                                                                \
   } while (0)
+#define sp_error(args) sp_diag_msg(args, "ERROR: ")
+#define sp_warn(args) sp_diag_msg(args, "WARNING: ")
 #endif
-
-#define sp_error(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::ERROR)
-#define sp_warn(args) sp_diag_msg(args, diagnostic_msgs::DiagnosticStatus::WARN)
 
 namespace serial_protocol
 {
@@ -230,6 +236,7 @@ Device::~Device()
   }
 }
 
+#ifdef HAVE_ROS
 void Device::init_ros(ros::NodeHandle& nh)
 {
   std::vector<std::pair<SensorBase*, bool>>::iterator s;
@@ -239,6 +246,7 @@ void Device::init_ros(ros::NodeHandle& nh)
     sensor->init_ros(nh);
   }
 }
+#endif
 
 std::string Device::get_serial()
 {
