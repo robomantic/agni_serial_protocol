@@ -1407,9 +1407,23 @@ Sensor_JointState::~Sensor_JointState()
 #ifdef HAVE_ROS
 void Sensor_JointState::init_ros(ros::NodeHandle& nh)
 {
+  // generate the suffix
   std::string suffix = "";
   if (nb_sensors > 1)
-    std::string suffix = "_" + std::to_string(nb_sensors - 1);
+    suffix = "_" + std::to_string(nb_sensors - 1);
+
+  // try find the joint name ordered list on the parameter server
+  std::vector<std::string> joint_names;
+  nh.getParam("js_name_map" + suffix + "/joint_names", joint_names);  // no default values
+  // check validity
+  if (joint_names.size() != 0)
+  {
+    if (positions.size() == joint_names.size())
+      msg.name = joint_names;
+    else
+      ROS_WARN_STREAM("Provided joint name list is not matching data size (" << joint_names.size()
+                                                                             << " != " << positions.size() << ")");
+  }
   pub = nh.advertise<sensor_msgs::JointState>("joint_states" + suffix, 10);
   std::cout << "advertized a ros node for a JointState sensor " << std::endl;
 }
@@ -1426,6 +1440,13 @@ void Sensor_JointState::publish()
     msg.position = positions;  // should be radian here
     msg.velocity = velocities;
     msg.effort = efforts;
+    // if names were provided, do they match the size, if not delete the names
+    if (msg.name.size() != 0 && msg.name.size() != msg.position.size())
+    {
+      ROS_WARN_STREAM("stored joint name list is not matching data size (" << msg.name.size()
+                                                                           << " != " << msg.position.size());
+      msg.name.clear();
+    }
     pub.publish(msg);
 #else
     // printf something else there
@@ -1476,6 +1497,7 @@ Sensor_tactile_glove_teensy_bend::Sensor_tactile_glove_teensy_bend(const uint16_
   velocities.resize(num_joints);
   efforts.resize(num_joints);
 #ifdef HAVE_ROS
+  // use a default naming convention that can be overriden with a param in base class
   for (size_t i = 0; i < num_joints; i++)
   {
     msg.name.push_back("bend_" + std::to_string(i + 1));
