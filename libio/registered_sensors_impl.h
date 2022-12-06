@@ -973,12 +973,12 @@ void Sensor_iobject_myrmex::publish()
         for (size_t channel_id = 0; channel_id < NUM_CHANNELS; channel_id++)
         {
           msg.sensors[board_id].values[adc_id * NUM_CHANNELS + channel_id] =
-            tactile_array[board_start_idx + adc_start_idx + channel_id];
+              tactile_array[board_start_idx + adc_start_idx + channel_id];
         }
       }
     }
     msg.header.stamp = ros::Time::now();
-    //msg.sensors = tactile_sensors;
+    // msg.sensors = tactile_sensors;
     pub.publish(msg);
 #else
     // printf something else there
@@ -1061,6 +1061,8 @@ bool Sensor_iobject_myrmex::parse()
 
 // 16x16 array, row-major for the vector, and values is offset in the source buffer
 // mapping sorts ADC and channel ordering at once
+// NOLINTBEGIN
+// 16x16 array better visualization
 const uint8_t myrmex_data_lut[256] =
 {
 208, 224,  32,   0, 209, 225,  33,   1, 210, 226,  34,   2, 211, 227,  35,   3,
@@ -1079,6 +1081,7 @@ const uint8_t myrmex_data_lut[256] =
 204,  60,  28,  76, 205,  61,  29,  77, 206,  62,  30,  78, 207,  63,  31,  79,
 188, 156, 124,  92, 189, 157, 125,  93, 190, 158, 126,  94, 191, 159, 127,  95,
 172, 252, 140, 108, 173, 253, 141, 109, 174, 254, 142, 110, 175, 255, 143, 111};
+// NOLINTEND
 
 // DECL
 class Sensor_myrmex_v2 : public Sensor_Tactile
@@ -1109,9 +1112,7 @@ private:
   const unsigned int ADC_PER_BOARD = 16;
 
   static unsigned int board_count;
-
 };
-
 
 unsigned int Sensor_myrmex_v2::board_count{ 0 };
 
@@ -1129,7 +1130,7 @@ void Sensor_myrmex_v2::init_ros(ros::NodeHandle& nh)
 {
   msg.sensors.resize(1);
   // override topic_name if given
-  if (args_map_str.find("topic_name")!=args_map_str.end())
+  if (args_map_str.find("topic_name") != args_map_str.end())
   {
     pub = nh.advertise<tactile_msgs::TactileState>(args_map_str["topic_name"], 10);
   }
@@ -1137,7 +1138,7 @@ void Sensor_myrmex_v2::init_ros(ros::NodeHandle& nh)
     pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, 10);
   std::cout << "advertized a ros node for a Myrmex tactile sensor " << sensor_type.name << std::endl;
   // override sensor name/channel
-  if (args_map_str.find("name")!=args_map_str.end())
+  if (args_map_str.find("name") != args_map_str.end())
   {
     msg.sensors[0].name = args_map_str["name"];
   }
@@ -1165,7 +1166,7 @@ void Sensor_myrmex_v2::publish()
     std::cout << "  timestamp: " << timestamp << "\n\tdata: ";
     for (size_t i = 0; i < tactile_array.size(); i++)
     {
-      if (i > 0 && i%16 == 0)
+      if (i > 0 && i % 16 == 0)
         std::cout << std::endl;
       std::cout << tactile_array[i] << " | ";
     }
@@ -1186,12 +1187,12 @@ bool Sensor_myrmex_v2::parse()
       // there are 256 samples of 2 bytes = 512 bytes = sen_len,
       // 4 MSB are the channel number of the ADC, 12 LSB are tactile sensor data.
       // ADC are in the CS sequence of myrmex board
-      for (uint16_t idx = 0; idx < len/2; ++idx)
+      for (uint16_t idx = 0; idx < len / 2; ++idx)
       {
         // find the offset in the buf using a lut
         uint8_t offset = myrmex_data_lut[idx];
-        //uint8_t channel = LITTLEENDIAN4MSB_TO_UNSIGNED_INT8(buf + offset);
-        uint16_t tmp = LITTLEENDIAN12_TO_UNSIGNED_INT16(buf + offset*2);
+        // uint8_t channel = LITTLEENDIAN4MSB_TO_UNSIGNED_INT8(buf + offset);
+        uint16_t tmp = LITTLEENDIAN12_TO_UNSIGNED_INT16(buf + offset * 2);
         tactile_array[idx] = (float)tmp;
       }
       new_data = true;
@@ -1200,7 +1201,6 @@ bool Sensor_myrmex_v2::parse()
   }
   return false;
 }
-
 
 /* palm baro array */
 
@@ -1327,7 +1327,8 @@ void Sensor_tactile_glove_teensy::init_ros(ros::NodeHandle& nh)
   msg.sensors.resize(1);
   pub = nh.advertise<tactile_msgs::TactileState>("TactileGlove", 10);
   msg.sensors[0].name = "tactile";
-  std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << " on topic TactileGlove" << std::endl;
+  std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << " on topic TactileGlove"
+            << std::endl;
 }
 #endif
 
@@ -1584,5 +1585,5 @@ bool Sensor_generic_position_float::parse()
   }
   return false;
 }
-}
+}  // namespace serial_protocol
 #endif
