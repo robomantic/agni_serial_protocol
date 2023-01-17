@@ -8,6 +8,7 @@
 #include <ros/ros.h>
 
 namespace po = boost::program_options;
+serial_protocol::SPThrowHandler th;
 
 po::options_description options("options");
 void usage(char* argv[])
@@ -22,7 +23,15 @@ bool handleCommandline(std::string& device, bool& verbose, bool& ignore_timeout,
   device = "/dev/ttyACM0";
   sensor_args = "";
   verbose = false;
-  ignore_timeout = false;
+
+  th.throw_at_timeout = true;
+  th.throw_at_header_error = false;
+  th.throw_at_did_error = false;
+  th.throw_at_checksum_error = false;
+  th.throw_at_size_error = false;
+  th.throw_at_request_error = false;
+  th.throw_at_failed_request = false;
+  th.throw_at_send_error = true;
 
   // define processed options
   po::options_description inputs("input options");
@@ -32,7 +41,9 @@ bool handleCommandline(std::string& device, bool& verbose, bool& ignore_timeout,
     ("device_file", po::value<std::string>(&device_filename)->implicit_value(device_filename), "device type definition filename");
   options.add_options()
     ("verbose,v", "activate verbosity")
-    ("ignore_timeout", "do not quit a data timeout")
+    ("ignore_timeout", "do not quit at data timeout")
+    ("quit_at_datagram_errors", "")
+    ("quit_at_request_errors", "")
     ("sensor_args", po::value<std::string>(&sensor_args)->implicit_value(sensor_args), "extra args for the sensor parser ex: arg1=val1;arg2=val2")
     ("help,h", "Display this help message.");
   options.add(inputs);
@@ -43,8 +54,19 @@ bool handleCommandline(std::string& device, bool& verbose, bool& ignore_timeout,
   if (map.count("verbose"))
     verbose = true;
   if (map.count("ignore_timeout"))
-    ignore_timeout = true;
-
+    th.throw_at_timeout = false;
+  if (map.count("quit_at_datagram_errors"))
+  {
+    th.throw_at_header_error = true;
+    th.throw_at_did_error = true;
+    th.throw_at_checksum_error = true;
+    th.throw_at_size_error = true;
+  }
+  if (map.count("quit_at_request_errors"))
+  {
+    th.throw_at_request_error = true;
+    th.throw_at_failed_request = true;
+  }
   if (map.count("help"))
     return true;
   po::notify(map);
@@ -103,7 +125,7 @@ int main(int argc, char** argv)
       std::cout << std::endl;
     serial_protocol::SerialProtocolBase p(&s, sDeviceFilename, sSensorFilename, sSensorArgs);
     p.verbose = bVerbose;
-    p.throw_at_timeout = !bIgnoreTimeout;
+    p.set_throw_handler(th);
     std::cout << "initializing serial protocol\n";
     std::cout << "initializing ros\n";
     p.init_ros(nh);  // must be first to get diagnostic messages over ROS when initializing communication with the

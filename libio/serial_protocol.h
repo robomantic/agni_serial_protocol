@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <exception>
 #include <utility>
 #include <stdint.h>
 #include "serial_com.h"
@@ -165,6 +166,104 @@ protected:
   std::string serialnum;
 };
 
+struct SPThrowHandler
+{
+  bool throw_at_header_error;
+  bool throw_at_checksum_error;
+  bool throw_at_size_error;
+  bool throw_at_did_error;
+  bool throw_at_datagram_error()
+  {
+    return (throw_at_header_error | throw_at_checksum_error | throw_at_size_error | throw_at_did_error);
+  };
+  bool throw_at_timeout;
+  bool throw_at_request_error;
+  bool throw_at_failed_request;
+  bool throw_at_send_error;
+};
+
+class SPBaseException : public std::runtime_error
+{
+public:
+  explicit SPBaseException(const char* message) : std::runtime_error(std::string("sp:") + message)
+  {
+  }
+  explicit SPBaseException(const std::string& message) : std::runtime_error(std::string("sp:") + message)
+  {
+  }
+  virtual ~SPBaseException() noexcept
+  {
+  }
+};
+
+// To filger exceptions that came from a bad datagram
+class SPDatagramException : public SPBaseException
+{
+public:
+  SPDatagramException(const std::string& s) : SPBaseException(s){};
+};
+
+class SPInvalidHeaderException : public SPDatagramException
+{
+public:
+  SPInvalidHeaderException() : SPDatagramException("Invalid header"){};
+};
+
+class SPInvalidChecksumException : public SPDatagramException
+{
+public:
+  SPInvalidChecksumException() : SPDatagramException("Invalid checksum"){};
+  SPInvalidChecksumException(const std::string& s) : SPDatagramException(s){};
+};
+class SPInvalidSizeException : public SPDatagramException
+{
+public:
+  SPInvalidSizeException() : SPDatagramException("Invalid size"){};
+  SPInvalidSizeException(const std::string& s) : SPDatagramException(s){};
+};
+
+class SPUnknownDIDException : public SPDatagramException
+{
+public:
+  SPUnknownDIDException() : SPDatagramException("Unknown datagram id"){};
+  SPUnknownDIDException(const int& did)
+    : SPDatagramException("Unknown datagram id " + SPUnknownDIDException::getMessage(did)){};
+
+  std::string getMessage(const int& did)
+  {
+    std::stringstream sstr;
+    sstr << did;
+    return sstr.str();
+  };
+};
+
+class SPInvalidRequestException : public SPBaseException
+{
+public:
+  SPInvalidRequestException() : SPBaseException("Invalid request"){};
+  SPInvalidRequestException(const std::string& s) : SPBaseException(s){};
+};
+
+class SPFailedRequestException : public SPBaseException
+{
+public:
+  SPFailedRequestException() : SPBaseException("Failed request"){};
+  SPFailedRequestException(const std::string& s) : SPBaseException(s){};
+};
+
+class SPReadTimeOutException : public SPBaseException
+{
+public:
+  SPReadTimeOutException() : SPBaseException("Read timeout"){};
+  SPReadTimeOutException(const std::string& s) : SPBaseException(s){};
+};
+
+class SPSendException : public SPBaseException
+{
+public:
+  SPSendException() : SPBaseException("Send error"){};
+};
+
 class SerialProtocolBase
 {
 public:
@@ -200,9 +299,12 @@ public:
   bool exists_sensor(const uint8_t sen_id);
 
   DeviceType get_device();
+  void set_throw_handler(const SPThrowHandler& th)
+  {
+    throw_handler = th;
+  };
   bool verbose;
   std::string node_prefix;
-  bool throw_at_timeout;
 
 protected:
   void config();
@@ -215,7 +317,8 @@ protected:
   void read_topology(uint8_t* buf);
   void read_error(uint8_t* buf);
   void read_data(uint8_t* buf, const uint8_t did);
-  void read(bool local_throw_at_timeout);
+  void read_maybe_non_impl_cmd(const std::string req_fn_name);
+  void read();
 
   // void unpack_data(uint8_t *buf);
   bool valid_data(const uint8_t* buf, const uint32_t buf_len);
@@ -238,6 +341,9 @@ protected:
   uint32_t gen_period_sensor_req(uint8_t* buf, const uint8_t sen_id, const uint16_t period);
 
   void parse_sensor_args();
+  void print_buffer(size_t len = 5);
+  void print_previous_buffer();
+  void save_buffer(size_t len);
 
   uint8_t version;
   bool streaming;
@@ -250,7 +356,10 @@ protected:
   std::string s_filename;
   std::string s_args;
   Device dev;
+  SPThrowHandler throw_handler;
   uint8_t read_buf[SP_MAX_BUF_SIZE];
+  uint8_t previous_buffer[SP_MAX_BUF_SIZE];
+  uint16_t previous_len;
   uint8_t last_cmd;
   bool ping_requested;
 

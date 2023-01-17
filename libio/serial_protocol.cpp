@@ -51,7 +51,7 @@ SensorBase::SensorBase(const uint16_t sen_len, const SensorType sensor_type)
   if (this->sensor_type.data_length > 0)
   {
     if (sen_len != this->sensor_type.data_length)
-      throw std::runtime_error("sensor: non-matching data length");
+      throw SPInvalidSizeException("sensor: non-matching data length");
   }
   len = sen_len;
   base_sensor_id = ++base_sensor_count;
@@ -368,7 +368,6 @@ SerialProtocolBase::SerialProtocolBase(SerialCom* serial_com, const std::string 
                                        const std::string sensor_filename, const std::string sensor_args)
   : verbose(false)
   , node_prefix("")
-  , throw_at_timeout(true)
   , streaming(false)
   , s(serial_com)
   , d_filename(device_filename)
@@ -376,6 +375,7 @@ SerialProtocolBase::SerialProtocolBase(SerialCom* serial_com, const std::string 
   , s_args(sensor_args)
   , last_cmd(SP_CMD_NONE)
 {
+  throw_handler.throw_at_timeout = true;
 }
 
 SerialProtocolBase::~SerialProtocolBase()
@@ -697,10 +697,29 @@ void SerialProtocolBase::config()
   }
   catch (const std::exception& e)
   {
-    sp_error("sp: failed to config " << e.what() << std::endl);
+    sp_error("sp: config req send error " << e.what() << std::endl);
+    // do not make it a SPFailedRequestException as it should always be fatal
     throw std::runtime_error("sp: failed to config");
   }
-  read(true);
+  try
+  {
+    read();
+  }
+  catch (const SPBaseException& e)
+  {
+    sp_error(" " << std::string(e.what()));
+    // do not make it a SPFailedRequestException as it should always be fatal
+    throw std::runtime_error("sp: failed to config");
+  }
+  catch (const std::exception& e)
+  {
+    sp_error(" " << e.what());
+    if (1)  // errors should be handled and print debug info all the time
+    {
+      print_buffer();
+    }
+    throw;
+  }
 }
 
 void SerialProtocolBase::ping()
@@ -714,8 +733,8 @@ void SerialProtocolBase::ping()
   }
   catch (const std::exception& e)
   {
-    sp_error("sp: failed to send ping request " << e.what() << std::endl);
-    throw std::runtime_error("sp: failed to send ping request");
+    sp_error("sp: ping request send error: " << e.what() << std::endl);
+    throw SPFailedRequestException("failed to send ping request");
   }
   // no need to read here as ping will occur during normal update
   // read(true);
@@ -771,10 +790,10 @@ void SerialProtocolBase::req_serialnum()
   }
   catch (const std::exception& e)
   {
-    sp_error("sp: failed to req serial " << e.what());
-    throw std::runtime_error("sp: failed to req serial");
+    sp_error("sp: req serialnum send error: " << e.what());
+    throw SPFailedRequestException("failed to req serial");
   }
-  read(false);  // function might not be implemented in the device, so ignore if no response
+  read_maybe_non_impl_cmd("serialnum");
 }
 
 void SerialProtocolBase::req_topology()
@@ -788,10 +807,56 @@ void SerialProtocolBase::req_topology()
   }
   catch (const std::exception& e)
   {
-    sp_error("sp: failed to req topology " << e.what());
-    throw std::runtime_error("sp: failed to req topology");
+    sp_error("sp: req topology send error: " << e.what());
+    throw SPFailedRequestException("failed to req topology");
   }
-  read(false);  // function might not be implemented in the device, so ignore if no response
+  read_maybe_non_impl_cmd("topology");
+}
+
+void SerialProtocolBase::read_maybe_non_impl_cmd(const std::string req_fn_name)
+{
+  try
+  {
+    read();
+  }
+  catch (const SPReadTimeOutException& e)
+  {
+    // function might not be implemented in the device, so ignore if no response
+    if (verbose)
+    {
+      sp_warn("sp:the device did not answer to a " + req_fn_name + " request");
+    }
+  }
+  catch (const SPDatagramException& e)
+  {
+    print_buffer();
+    if (throw_handler.throw_at_size_error)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const SPBaseException& e)
+  {
+    if (throw_handler.throw_at_did_error)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const std::exception& e)
+  {
+    // sp_error(" " << e.what());
+    if (1)  // errors should be handled and print debug info all the time
+    {
+      print_buffer();
+    }
+    throw;
+  }
 }
 
 bool SerialProtocolBase::set_device(const uint8_t dev_id)
@@ -812,7 +877,7 @@ void SerialProtocolBase::set_period(const uint8_t sen_id, const uint16_t period)
   uint32_t send_buf_len = 0;
   if (sen_id == 0)
   {
-    throw std::runtime_error("sp: set_period: sen_id cannot be 0 for set period");
+    throw SPInvalidRequestException("set_period: sen_id cannot be 0 for set period");
   }
   else
   {
@@ -823,7 +888,7 @@ void SerialProtocolBase::set_period(const uint8_t sen_id, const uint16_t period)
     }
     else
     {
-      throw std::runtime_error("sp: set_period: sen_id does not exist");
+      throw SPInvalidRequestException("set_period: sen_id does not exist");
     }
   }
   if (send_buf_len)
@@ -832,15 +897,15 @@ void SerialProtocolBase::set_period(const uint8_t sen_id, const uint16_t period)
     {
       send(send_buf, send_buf_len);
     }
-    catch (const std::exception& e)
+    catch (const SPSendException& e)
     {
       sp_error("sp: failed to set period " << e.what());
-      throw std::runtime_error("sp: failed to set period");
+      throw SPFailedRequestException("failed to set period");
     }
   }
   else
   {
-    throw std::runtime_error("sp: invalid set period request");
+    throw SPInvalidRequestException("invalid set period request");
   }
 }
 
@@ -858,15 +923,15 @@ void SerialProtocolBase::set_periods(const std::map<uint8_t, uint16_t> period_ma
       {
         send(send_buf, send_buf_len);
       }
-      catch (const std::exception& e)
+      catch (const SPSendException& e)
       {
         sp_error("sp: failed to set periods " << e.what());
-        throw std::runtime_error("sp: failed to set periods");
+        throw SPFailedRequestException("failed to set periods");
       }
     }
     else
     {
-      throw std::runtime_error("sp: invalid set periods request");
+      throw SPInvalidRequestException("invalid set periods request");
     }
   }
 }
@@ -1138,26 +1203,91 @@ void SerialProtocolBase::trigger(const uint8_t mode, const uint8_t sen_id)
       {
         send(send_buf, send_buf_len);
       }
-      catch (const std::exception& e)
+      catch (const SPSendException& e)
       {
-        sp_error("sp: failed to trigger " << e.what());
-        throw std::runtime_error("sp: failed to trigger");
+        sp_warn("sp: failed to trigger " << e.what());
+        throw SPFailedRequestException("failed to trigger");
       }
     }
     else
     {
-      throw std::runtime_error("sp: invalid trigger request");
+      throw SPInvalidRequestException(" invalid trigger request");
     }
   }
   else
   {
-    throw std::runtime_error("sp: cannot trigger while streaming, stop streaming first");
+    sp_warn("sp: cannot trigger while streaming, stop streaming first");
   }
 }
 
 void SerialProtocolBase::update()
 {
-  read(throw_at_timeout);
+  // handle exceptions, depending on settings
+  try
+  {
+    read();
+  }
+  catch (const SPReadTimeOutException& e)
+  {
+    if (throw_handler.throw_at_timeout)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const SPDatagramException& e)
+  {
+    print_buffer();
+    if (throw_handler.throw_at_datagram_error())
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const SPInvalidRequestException& e)
+  {
+    if (throw_handler.throw_at_request_error)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const SPFailedRequestException& e)
+  {
+    if (throw_handler.throw_at_failed_request)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const SPSendException& e)
+  {
+    if (throw_handler.throw_at_send_error)
+      throw;
+    else
+    {
+      sp_error(" " << e.what());
+      return;
+    }
+  }
+  catch (const std::exception& e)
+  {
+    // sp_error(" " << e.what());
+    if (1)  // errors should be handled and print debug info all the time
+    {
+      print_buffer();
+    }
+    throw;
+  }
+
 #ifdef HAVE_ROS
   if (!dev.alive)
     update_diagnostic(diagnostic_msgs::DiagnosticStatus::STALE);
@@ -1190,22 +1320,8 @@ void SerialProtocolBase::update_diagnostic(const uint8_t& level, const std::stri
 
 void SerialProtocolBase::read_config(uint8_t* buf)
 {
-  // read beginning of config message
-  /*size_t buf_len = 0;
-  unsigned int retry = 0;
-  while (retry < 5 && buf_len==0)
-  {
-    try
-    {
-      buf_len = s->read(buf, CONF_MIN_LEN);
-    }
-    catch (const std::exception &e) {
-      std::cerr << " " <<  e.what() << std::endl;
-      if (retry ==5)
-        throw std::runtime_error("sp: device failed to answer");
-    }
-    retry++;
-  }*/
+  // leave all exception a runtime_error to be fatal all the time
+
   // read additional config header
   size_t buf_len = 0;
   buf_len = s->read(buf + SP_VERSION_OFFSET, SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN);
@@ -1213,6 +1329,7 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   {
     sp_error("sp: incorrect config header size: " << buf_len << " < "
                                                   << SP_VERSION_LEN + SP_DEVID_LEN + SP_SDSC_SZ_LEN);
+
     throw std::runtime_error("sp: device did not answer enough data");
   }
   // read versions
@@ -1247,15 +1364,8 @@ void SerialProtocolBase::read_config(uint8_t* buf)
   uint8_t config_num = (uint8_t)buf[SP_SDSC_OFFSET];
   // read next part of the config message
   size_t config_len = 0;
-  try
-  {
-    config_len = s->read(buf + SP_SDSC_DATA_OFFSET, config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN);
-  }
-  catch (const std::exception& e)
-  {
-    sp_error("sp: device failed to answer " << e.what());
-    throw std::runtime_error("sp: device failed to answer");
-  }
+  config_len = s->read(buf + SP_SDSC_DATA_OFFSET, config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN);
+
   // check data
   if (config_len != (size_t)(config_num * SP_SDSC_SIZE + SP_CHKSUM_LEN))
   {
@@ -1288,7 +1398,7 @@ void SerialProtocolBase::read_no_data(uint8_t* buf)
   if (buf_len < SP_CHKSUM_LEN)
   {
     sp_error("sp: incorrect size nodata read: " << buf_len << " < " << SP_CHKSUM_LEN);
-    throw std::runtime_error("sp: device did not answer enough bytes for a no data read");
+    throw SPInvalidSizeException(" device did not answer enough bytes for a no data read");
   }
 }
 
@@ -1300,27 +1410,20 @@ void SerialProtocolBase::read_serialnum(uint8_t* buf)
   if (buf_len < SP_SER_SZ_LEN)
   {
     sp_error("sp: incorrect serialnum header size: " << buf_len << " < " << SP_SER_SZ_LEN);
-    throw std::runtime_error("sp: device did not answer enough data for serialnum");
+    throw SPInvalidSizeException(" device did not answer enough data for serialnum");
   }
   // read serial data
   uint8_t sernum_awaitedlen = (uint8_t)buf[SP_SER_SZ_OFFSET];
 
   // read next part of the config message
   size_t sernum_len = 0;
-  try
-  {
-    sernum_len = s->read(buf + SP_SER_NUM_OFFSET, sernum_awaitedlen + SP_CHKSUM_LEN);
-  }
-  catch (const std::exception& e)
-  {
-    sp_error("sp: device failed to answer " << e.what());
-    throw std::runtime_error("sp: device failed to answer");
-  }
+  sernum_len = s->read(buf + SP_SER_NUM_OFFSET, sernum_awaitedlen + SP_CHKSUM_LEN);
+
   // check data
   if (sernum_len != (size_t)(sernum_awaitedlen + SP_CHKSUM_LEN))
   {
     sp_error("sp: read " << sernum_len << " bytes of sernum_len instead of " << sernum_awaitedlen + SP_CHKSUM_LEN);
-    throw std::runtime_error("sp: incomplete serialnum datagram");
+    throw SPInvalidSizeException(" incomplete serialnum datagram");
   }
   // validate the full frame
   if (valid_data(buf, SP_SER_NUM_OFFSET + sernum_len))
@@ -1331,7 +1434,7 @@ void SerialProtocolBase::read_serialnum(uint8_t* buf)
   else
   {
     // error
-    throw std::runtime_error("sp: checksum or header invalid for serialnum");
+    throw SPInvalidChecksumException(" checksum or header invalid for serialnum");
   }
 }
 
@@ -1343,7 +1446,7 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
   if (buf_len < SP_TOP_TYPE_LEN)
   {
     sp_error("sp: incorrect topo header size: " << buf_len << " < " << SP_TOP_TYPE_LEN);
-    throw std::runtime_error("sp: device did not answer enough data for topology request");
+    throw SPInvalidSizeException(" device did not answer enough data for topology request");
   }
   // save type
   uint8_t topo_type = (uint8_t)buf[SP_TOP_TYPE_OFFSET];
@@ -1364,41 +1467,26 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
     {
       // read size of the ecd message
       size_t ecd_len_byteread = 0;
-      try
-      {
-        ecd_len_byteread = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset, SP_TOP_ECD_SZ_LEN);
-      }
-      catch (const std::exception& e)
-      {
-        sp_error("sp: device failed to answer ecd size " << e.what());
-        throw std::runtime_error("sp: device failed to answer ecd size");
-      }
+      ecd_len_byteread = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset, SP_TOP_ECD_SZ_LEN);
 
       // check size
       if (ecd_len_byteread != (size_t)(SP_TOP_ECD_SZ_LEN))
       {
         sp_error("sp: topology ECD size missing");
-        throw std::runtime_error("sp: incomplete topology ECD datagram");
+        throw SPInvalidSizeException(" incomplete topology ECD datagram");
       }
       else
       {
         uint8_t ecd_len = (uint8_t)buf[SP_TOP_ECD_OFFSET + ecd_current_offset];
         // read data part of the ecd message
         size_t ecd_data_byteread = 0;
-        try
-        {
-          ecd_data_byteread = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset + SP_TOP_ECD_SZ_LEN, ecd_len);
-        }
-        catch (const std::exception& e)
-        {
-          sp_error("sp: device failed to answer ecd data " << e.what());
-          throw std::runtime_error("sp: device failed to answer ecd data");
-        }
+        ecd_data_byteread = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset + SP_TOP_ECD_SZ_LEN, ecd_len);
+
         // check data size
         if (ecd_data_byteread != (size_t)(ecd_len))
         {
           sp_error("sp: topology read " << ecd_data_byteread << " ECD data instead of " << ecd_len << " awaited");
-          throw std::runtime_error("sp: incomplete topology ECD datagram");
+          throw SPInvalidSizeException("sp: incomplete topology ECD datagram");
         }
         else
         {
@@ -1421,21 +1509,13 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
 
     // read Checksum
     size_t checksum_len = 0;
-    try
-    {
-      checksum_len = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset, SP_CHKSUM_LEN);
-    }
-    catch (const std::exception& e)
-    {
-      sp_error("sp: checksum missing for topo " << e.what());
-      throw std::runtime_error("sp: checksum missing for topo");
-    }
+    checksum_len = s->read(buf + SP_TOP_ECD_OFFSET + ecd_current_offset, SP_CHKSUM_LEN);
 
     // check checksum is there
     if (checksum_len != (size_t)(SP_CHKSUM_LEN))
     {
       sp_error("sp: topology has no checksum");
-      throw std::runtime_error("sp: topology misses checksum");
+      throw SPInvalidSizeException(" topology checksum");
     }
 
     // validate the full frame
@@ -1447,7 +1527,7 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
     else
     {
       // error
-      throw std::runtime_error("sp: checksum or header invalid for topology");
+      throw SPInvalidChecksumException(" checksum or header invalid for topology");
     }
   }
   else
@@ -1456,7 +1536,7 @@ void SerialProtocolBase::read_topology(uint8_t* buf)
     {
       default:
         sp_error("sp: topo different than matrix type are not yet supported");
-        throw std::runtime_error("sp: only topology in matrix type are supported for now");
+        throw SPInvalidRequestException(" only topology in matrix type are supported for now");
     }
   }
 }
@@ -1478,7 +1558,7 @@ void SerialProtocolBase::read_data(uint8_t* buf, const uint8_t did)
         data_len = s->read(buf + SP_DATA_OFFSET, expected_len);
       }
       else
-        throw std::runtime_error("sp:expects too much data for buffer max size");
+        throw std::overflow_error("sp:expects too much data for buffer max size");
       // check received data
       if (data_len == expected_len)
       {
@@ -1487,31 +1567,39 @@ void SerialProtocolBase::read_data(uint8_t* buf, const uint8_t did)
         {
           // unpack the data
           if (!sensor->first->unpack(buf + SP_DATA_OFFSET))
-            throw std::runtime_error("sp:sensor data storage not initialized");
+          {
+            // "sp:sensor data storage not initialized"
+            throw std::bad_alloc();
+          }
           // parse the data (sensor specific)
           if (verbose)
             std::cout << "sp: parsing answer" << std::endl;
           sensor->first->parse();
           if (verbose)
             std::cout << "sp: data parsed" << std::endl;
+          save_buffer(SP_DATA_OFFSET + expected_len);
         }
         else
-          throw std::runtime_error("sp:data with invalid checksum");
+        {
+          std::cerr << "sp:data with invalid checksum" << std::endl;
+          print_buffer(SP_DATA_OFFSET + expected_len);
+          throw SPInvalidChecksumException("data with invalid checksum");
+        }
       }
       else
-        throw std::runtime_error("sp:invalid data size");
+        throw SPInvalidSizeException("invalid data size");
     }
     else
     {
       sp_error("sp:received data of an inactive sensor id " << (int)did);
-      throw std::runtime_error("sp:inactive sensor id");
+      throw SPUnknownDIDException((int)did);
     }
   }
   else
   {
     // TODO we should maybe flush until we see a header ?
     sp_error("sp:found unknown sensor id " << (int)did);
-    throw std::runtime_error("sp:unknown sensor id");
+    throw SPUnknownDIDException((int)did);
   }
 }
 
@@ -1530,23 +1618,23 @@ void SerialProtocolBase::read_error(uint8_t* buf)
         if (!valid_checksum(buf, 5))
         {
           // TODO should we throw for a checksum error ?
-          throw std::runtime_error("sp:err, chksum invalid checksum");
+          throw SPInvalidChecksumException("sp:err, chksum invalid checksum");
         }
         sstr << " device says checksum error ";
         break;
       case SP_ERR_UNKNCMD:
         if (!valid_checksum(buf, 5))
-          throw std::runtime_error("sp:err, cmd invalid checksum");
+          throw SPInvalidChecksumException("sp:err, cmd invalid checksum");
         sstr << " device says unknown command ";
         break;
       case SP_ERR_UNKNOWN:
         if (!valid_checksum(buf, 5))
-          throw std::runtime_error("sp:err, unk invalid checksum");
+          throw SPInvalidChecksumException("sp:err, unk invalid checksum");
         sstr << " device encountered an unknown error";
         break;
       case SP_ERR_UNKNSID:
         if (!valid_checksum(buf, 5))
-          throw std::runtime_error("sp:err, sid invalid checksum");
+          throw SPInvalidChecksumException("sp:err, sid invalid checksum");
         sstr << " device encountered an unknown sensor id";
         break;
       default:
@@ -1560,7 +1648,7 @@ void SerialProtocolBase::read_error(uint8_t* buf)
           s->read(buf + SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN + SP_CHKSUM_LEN,
                   str_len);  // read the reminder of the string
           if (!valid_checksum(buf, SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN + str_len + SP_CHKSUM_LEN))
-            throw std::runtime_error("sp:err, string invalid checksum");
+            throw SPInvalidChecksumException("sp:err, string invalid checksum");
           memcpy(strbuf, buf + SP_ERR_TYP_OFFSET + SP_ERR_TYP_LEN, str_len);
           strbuf[str_len] = '\0';  // end of string
           sstr << " device reports error: " << strbuf;
@@ -1582,31 +1670,59 @@ void SerialProtocolBase::read_error(uint8_t* buf)
     sp_warn("device says unknown command, but didn't send a checksum. Consider updating the firmware to fix this bug.");
     return;
   }
-  throw std::runtime_error("sp:err, invalid error message");
+  throw SPInvalidRequestException("sp:err, invalid error message");
 }
 
-void SerialProtocolBase::read(bool local_throw_at_timeout)
+void SerialProtocolBase::read()
 {
   // init the first bytes to null to not see spurious values when debugging
   std::memset(read_buf, 0, 7);
   size_t read_buf_len = 0;
-  try
+  // read 2 or 3 bytes for header or header  shifted by one.
+  read_buf_len = s->read(read_buf, SP_HEADER_LEN);
+  if (read_buf_len == SP_HEADER_LEN)
   {
-    // always read 3 bytes : HEADER + datagram id
-    read_buf_len = s->read(read_buf, SP_HEADER_LEN + SP_DID_LEN);
-    if (read_buf_len == SP_HEADER_LEN + SP_DID_LEN)
+    if (verbose)
+      std::cout << "sp: decoding answer" << std::endl;
+    // check header
+    if (!valid_header(read_buf))
     {
-      if (verbose)
-        std::cout << "sp: decoding answer" << std::endl;
-      // check header
-      if (!valid_header(read_buf))
+      // invalid, so check if the header is shifted by one
+      // read one more byte
+      read_buf_len = s->read(read_buf + 2, 1);
+      if (read_buf_len < 1)
       {
         if (verbose)
-          std::cout << "sp: found header 0x" << std::hex << (int)read_buf[0] << " 0x" << (int)read_buf[1] << std::endl;
-        // TODO should we throw of just flush and continue ?
-        throw std::runtime_error("sp:invalid header");
+          std::cerr << "sp: cannot read more of the header" << std::endl;
+        throw SPInvalidHeaderException();
       }
+      else
+      {
+        if (!valid_header(read_buf + 1))
+        {
+          if (verbose)
+            std::cerr << "sp: invalid header in the 3 bytes read" << std::endl;
+          print_previous_buffer();
+          // if flushed while device still streaming, it will fill the buffer and quit
+          throw SPInvalidHeaderException();
+        }
+        else
+        {
+          // fix the buffer start
+          read_buf[0] = SP_HDR1;
+          read_buf[1] = SP_HDR2;
+          // still warn the user
+          // if (verbose)
+          sp_warn("sp: header was shifted by one");
+        }
+      }
+      // the buffer is synchronized again, continue
+    }
 
+    // read the DID
+    read_buf_len = s->read(read_buf + SP_DID_OFFSET, SP_DID_LEN);
+    if (read_buf_len == SP_DID_LEN)
+    {
       // device is alive
       dev.alive = true;
       // decode datagram ID
@@ -1668,6 +1784,7 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
             if (verbose)
               std::cout << "sp: processing data answer of sensor id " << (int)did << std::endl;
             read_data(read_buf, did);
+
             last_cmd = SP_CMD_NONE;
           }
           else  // process invalid datagram id
@@ -1675,18 +1792,26 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
             sp_error("sp:found datagram id 0x" << std::hex << (int)did);
             read_no_data(read_buf);
             last_cmd = SP_CMD_NONE;
-            throw std::runtime_error("sp:unknown datagram id");
+            throw SPUnknownDIDException((int)did);
           }
       }
     }
     else
+    {
+      // this is a timeout, after we got a valid header, there should always be more
+      throw SPReadTimeOutException("missing datagram id");
+    }
+  }
+  else
+  {
+    if (read_buf_len == 0)
     {
       // react depending on last command
       switch (last_cmd)
       {
         case SP_CMD_NONE: {
           // if last cmd is empty, device is either stopped (normal to not receive anything)
-          // or streaming (not normal to receive anything)
+          // or streaming (not normal to not receive anything)
 
           // proceed to check if device is alive
           if (ping_requested)
@@ -1694,16 +1819,16 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
             // ping was already requested but not answered
             dev.alive = false;
             ping_requested = false;
-            if (local_throw_at_timeout)
+            // nothing to await from sensor
+            if (throw_handler.throw_at_timeout)
             {
-              // nothing to await from sensor
               sp_error("sp: device does not answer to ping");
-              throw std::runtime_error("sp: device does not answer to ping");
             }
             else
             {
               sp_warn("sp: device does not answer to ping");
             }
+            throw SPReadTimeOutException("device does not answer to ping");
           }
           else
           {
@@ -1720,9 +1845,9 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
         case SP_CMD_CALDSC: {
           std::stringstream sstr;
           sstr << "sp: no answer received from the device to command " << std::hex << (int)last_cmd;
-          if (local_throw_at_timeout)
+          if (throw_handler.throw_at_timeout)
           {
-            sp_error(sstr.str());
+            // sp_error(sstr.str());
             // nothing to await from sensor
             throw std::runtime_error(sstr.str());
           }
@@ -1740,21 +1865,49 @@ void SerialProtocolBase::read(bool local_throw_at_timeout)
           last_cmd = SP_CMD_NONE;
       }
     }
-  }
-  catch (const std::exception& e)
-  {
-    sp_error(" " << e.what());
-    if (verbose)
+    else
     {
-      std::cout << "sp: header 0x" << std::hex << (int)read_buf[0] << " 0x" << std::hex << (int)read_buf[1]
-                << std::endl;
-      std::cout << "sp: data 0x" << std::hex << (int)read_buf[2] << " 0x" << std::hex << (int)read_buf[3] << " 0x"
-                << std::hex << (int)read_buf[4] << " 0x" << std::hex << (int)read_buf[5] << " 0x" << std::hex
-                << (int)read_buf[6] << std::endl;
+      // received less than 2 bytes but more than 0
+      // maybe the device was too slow, so for now, display a message
+      std::cerr << "sp: read got only " << read_buf_len << " instead of 2 bytes : 0x" << std::hex << (int)read_buf[0]
+                << " 0x" << std::hex << (int)read_buf[1] << std::endl;
+      // TODO: ideally one wants to wait for 2 bytes and not lose the previous one in case the device is really slow
     }
-
-    throw;
   }
+}
+
+void SerialProtocolBase::print_buffer(size_t len)
+{
+  std::cerr << "sp: header 0x" << std::hex << (int)read_buf[0] << " 0x" << std::hex << (int)read_buf[1] << std::endl;
+  std::cerr << "sp: data ";
+  for (unsigned int i = 0; i < len - SP_HEADER_LEN; ++i)
+  {
+    std::cerr << " 0x" << std::hex << (int)read_buf[i + SP_HEADER_LEN];
+  }
+  std::cerr << std::endl;
+}
+
+void SerialProtocolBase::print_previous_buffer()
+{
+  if (previous_len > SP_HEADER_LEN)
+  {
+    std::cerr << "sp: past buffer header 0x" << std::hex << (int)previous_buffer[0] << " 0x" << std::hex
+              << (int)previous_buffer[1] << std::endl;
+    std::cerr << "sp: past buffer data ";
+    for (unsigned int i = 0; i < previous_len - SP_HEADER_LEN; ++i)
+    {
+      std::cerr << " 0x" << std::hex << (int)previous_buffer[i + SP_HEADER_LEN];
+    }
+    std::cerr << std::endl;
+    // avoid re-prints of past buffer
+    previous_len = 0;
+  }
+}
+
+void SerialProtocolBase::save_buffer(size_t len)
+{
+  memcpy(previous_buffer, read_buf, len);
+  previous_len = len;
 }
 
 bool SerialProtocolBase::get_data_as_float(float& val, const uint8_t did)
@@ -1937,7 +2090,7 @@ void SerialProtocolBase::send(const uint8_t* buf, const uint32_t len)
   catch (const std::exception& e)
   {
     std::cerr << e.what() << std::endl;
-    throw std::runtime_error("sp: failed to send");
+    throw SPSendException();
   }
 }
 
