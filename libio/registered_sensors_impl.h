@@ -72,6 +72,7 @@ void Sensor_Default::init_ros(ros::NodeHandle& nh)
   else
     sstr << sensor_type.name;
   pub = nh.advertise<std_msgs::String>(sstr.str(), 10);
+
   std::cout << "advertized a ros node for sensor " << sstr.str() << std::endl;
 }
 #endif
@@ -221,7 +222,15 @@ Sensor_IMU::Sensor_IMU(const uint16_t sen_len, const SensorType sensor_type) : S
 #ifdef HAVE_ROS
 void Sensor_IMU::init_ros(ros::NodeHandle& nh)
 {
-  msg.header.frame_id = sensor_type.name;
+  // add the namespace to the frame, to avoid duplicates
+  const std::string ns = nh.getNamespace().substr(1);  // ns contains an undesired front slash
+  
+  if (!ns.empty())
+    msg.header.frame_id = ns + "/" + sensor_type.name;
+  else
+     msg.header.frame_id = sensor_type.name;
+  // store the namespace
+
   pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, 10);
   std::cout << "advertized a ros node for an IMU sensor " << sensor_type.name << std::endl;
 }
