@@ -46,6 +46,7 @@ public:
 protected:
   unsigned int sensor_id;
 
+
 private:
   bool parse();
   std::stringstream sstr;
@@ -71,7 +72,7 @@ void Sensor_Default::init_ros(ros::NodeHandle& nh)
     sstr << sensor_type.name << "_" << sensor_id;
   else
     sstr << sensor_type.name;
-  pub = nh.advertise<std_msgs::String>(sstr.str(), 10);
+  pub = nh.advertise<std_msgs::String>(sstr.str(), default_pub_queue_size);
 
   std::cout << "advertized a ros node for sensor " << sstr.str() << std::endl;
 }
@@ -144,7 +145,7 @@ Sensor_IMU_MPU9250_Acc::Sensor_IMU_MPU9250_Acc(const uint16_t sen_len, const Sen
 #ifdef HAVE_ROS
 void Sensor_IMU_MPU9250_Acc::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, 10);
+  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, default_pub_queue_size);
   std::cout << "advertized a ros node for sensor " << sensor_type.name << std::endl;
 }
 #endif
@@ -231,7 +232,7 @@ void Sensor_IMU::init_ros(ros::NodeHandle& nh)
      msg.header.frame_id = sensor_type.name;
   // store the namespace
 
-  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, 10);
+  pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, default_pub_queue_size);
   std::cout << "advertized a ros node for an IMU sensor " << sensor_type.name << std::endl;
 }
 #endif
@@ -602,7 +603,7 @@ Sensor_Baro::Sensor_Baro(const uint16_t sen_len, const SensorType sensor_type) :
 #ifdef HAVE_ROS
 void Sensor_Baro::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::FluidPressure>(sensor_type.name, 10);
+  pub = nh.advertise<sensor_msgs::FluidPressure>(sensor_type.name, default_pub_queue_size);
   std::cout << "advertized a ros node for a Baro sensor " << sensor_type.name << std::endl;
 }
 #endif
@@ -691,7 +692,7 @@ Sensor_Joy::Sensor_Joy(const uint16_t sen_len, const SensorType sensor_type) : S
 #ifdef HAVE_ROS
 void Sensor_Joy::init_ros(ros::NodeHandle& nh)
 {
-  pub = nh.advertise<sensor_msgs::Joy>(sensor_type.name, 10);
+  pub = nh.advertise<sensor_msgs::Joy>(sensor_type.name, default_pub_queue_size);
   std::cout << "advertized a ros node for a Joy sensor " << sensor_type.name << std::endl;
 }
 #endif
@@ -838,7 +839,7 @@ Sensor_Tactile::Sensor_Tactile(const uint16_t sen_len, const SensorType sensor_t
 void Sensor_Tactile::init_ros(ros::NodeHandle& nh)
 {
   msg.sensors.resize(1);
-  pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, 10);
+  pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, default_pub_queue_size);
   msg.sensors[0].name = "tactile";
   std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << std::endl;
 }
@@ -1141,10 +1142,10 @@ void Sensor_myrmex_v2::init_ros(ros::NodeHandle& nh)
   // override topic_name if given
   if (args_map_str.find("topic_name") != args_map_str.end())
   {
-    pub = nh.advertise<tactile_msgs::TactileState>(args_map_str["topic_name"], 10);
+    pub = nh.advertise<tactile_msgs::TactileState>(args_map_str["topic_name"], default_pub_queue_size);
   }
   else
-    pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, 10);
+    pub = nh.advertise<tactile_msgs::TactileState>(sensor_type.name, default_pub_queue_size);
   std::cout << "advertized a ros node for a Myrmex tactile sensor " << sensor_type.name << std::endl;
   // override sensor name/channel
   if (args_map_str.find("name") != args_map_str.end())
@@ -1334,7 +1335,7 @@ Sensor_tactile_glove_teensy::Sensor_tactile_glove_teensy(const uint16_t sen_len,
 void Sensor_tactile_glove_teensy::init_ros(ros::NodeHandle& nh)
 {
   msg.sensors.resize(1);
-  pub = nh.advertise<tactile_msgs::TactileState>("TactileGlove", 10);
+  pub = nh.advertise<tactile_msgs::TactileState>("TactileGlove", default_pub_queue_size);
   msg.sensors[0].name = "tactile";
   std::cout << "advertized a ros node for a Tactile sensor " << sensor_type.name << " on topic TactileGlove"
             << std::endl;
@@ -1434,7 +1435,7 @@ void Sensor_JointState::init_ros(ros::NodeHandle& nh)
       ROS_WARN_STREAM("Provided joint name list is not matching data size (" << joint_names.size()
                                                                              << " != " << positions.size() << ")");
   }
-  pub = nh.advertise<sensor_msgs::JointState>("joint_states" + suffix, 10);
+  pub = nh.advertise<sensor_msgs::JointState>("joint_states" + suffix, default_pub_queue_size);
   std::cout << "advertized a ros node for a JointState sensor " << std::endl;
 }
 #endif

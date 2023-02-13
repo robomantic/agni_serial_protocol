@@ -45,7 +45,7 @@ namespace serial_protocol
 uint8_t SensorBase::base_sensor_count{ 0 };
 
 SensorBase::SensorBase(const uint16_t sen_len, const SensorType sensor_type)
-  : sensor_type(sensor_type), len(0), dataptr(0), timestamp(0), previous_timestamp(0)
+  : sensor_type(sensor_type), len(0), dataptr(0), timestamp(0), previous_timestamp(0), default_pub_queue_size(1)
 {
   // check data len consistency to registered len
   if (this->sensor_type.data_length > 0)

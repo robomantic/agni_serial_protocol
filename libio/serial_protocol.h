@@ -80,6 +80,7 @@ protected:
   void* dataptr;
   uint32_t timestamp;
   uint32_t previous_timestamp;
+  size_t default_pub_queue_size;
   bool new_data;
   uint8_t base_sensor_id;
   std::map<std::string, std::string> args_map_str;
