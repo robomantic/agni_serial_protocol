@@ -849,7 +849,7 @@ void Sensor_Tactile::publish()
 {
   if (previous_timestamp != timestamp && new_data)
   {
-    new_data = true;
+    new_data = false;
     previous_timestamp = timestamp;
 #ifdef HAVE_ROS
     msg.header.stamp = ros::Time::now();
@@ -1444,7 +1444,7 @@ void Sensor_JointState::publish()
 {
   if (previous_timestamp != timestamp && new_data)
   {
-    new_data = true;
+    new_data = false;
     previous_timestamp = timestamp;
 #ifdef HAVE_ROS
     msg.header.stamp = ros::Time::now();
