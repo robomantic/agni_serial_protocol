@@ -46,7 +46,6 @@ public:
 protected:
   unsigned int sensor_id;
 
-
 private:
   bool parse();
   std::stringstream sstr;
@@ -225,11 +224,11 @@ void Sensor_IMU::init_ros(ros::NodeHandle& nh)
 {
   // add the namespace to the frame, to avoid duplicates
   const std::string ns = nh.getNamespace().substr(1);  // ns contains an undesired front slash
-  
+
   if (!ns.empty())
     msg.header.frame_id = ns + "/" + sensor_type.name;
   else
-     msg.header.frame_id = sensor_type.name;
+    msg.header.frame_id = sensor_type.name;
   // store the namespace
 
   pub = nh.advertise<sensor_msgs::Imu>(sensor_type.name, default_pub_queue_size);
