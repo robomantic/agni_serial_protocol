@@ -1505,8 +1505,8 @@ Sensor_tactile_glove_teensy_bend::Sensor_tactile_glove_teensy_bend(const uint16_
   // sen_len = x * (1 id + 2 data) => x is the joint number
   num_joints = sen_len / 3;
   positions.resize(num_joints);
-  velocities.resize(num_joints);
-  efforts.resize(num_joints);
+  // velocities.resize(num_joints);
+  // efforts.resize(num_joints);
 #ifdef HAVE_ROS
   // use a default naming convention that can be overriden with a param in base class
   for (size_t i = 0; i < num_joints; i++)
@@ -1566,8 +1566,8 @@ Sensor_generic_position_float::Sensor_generic_position_float(const uint16_t sen_
   // sen_len = x * (4 B of float) => x is the joint number
   num_joints = sen_len / 4;
   positions.resize(num_joints);
-  velocities.resize(num_joints);
-  efforts.resize(num_joints);
+  // velocities.resize(num_joints);
+  // efforts.resize(num_joints);
 #ifdef HAVE_ROS
   for (size_t i = 0; i < num_joints; i++)
   {
