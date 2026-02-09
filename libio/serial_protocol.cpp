@@ -413,7 +413,7 @@ void SerialProtocolBase::parse_sensor_args()
         }
         else
         {
-          sensor_args_map[key] = sensor_args_map[key] + ";" + s.substr(pos + 1, std::string::npos);s.substr(pos + 1, std::string::npos);
+          sensor_args_map[key] = sensor_args_map[key] + ";" + s.substr(pos + 1, std::string::npos);
         }
       }
       if (multi_args)
