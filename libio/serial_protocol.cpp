@@ -2181,7 +2181,7 @@ uint32_t SerialProtocolBase::gen_period_sensor_req(uint8_t* buf, const uint8_t s
   uint8_t data[SP_PERIOD_SENSOR_DATA_LEN];
   data[0] = Lowbyte(period);
   data[1] = Highbyte(period);
-  return gen_command(buf, sen_id, SP_CMD_PERIOD, SP_PERIOD_SENSOR_DATA_LEN, 1, data);
+  return gen_command(buf, sen_id, SP_CMD_PERIOD, 1, SP_PERIOD_SENSOR_DATA_LEN, data);
 }
 
 /*
